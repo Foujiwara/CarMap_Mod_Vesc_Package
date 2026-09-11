@@ -19,7 +19,13 @@ Item {
     id: mainItem
     // Bumped on every edit - shown in the header as "build N" so a
     // stale/cached install is obvious at a glance instead of ambiguous.
-    property int buildMarker: 19
+    property int buildMarker: 20
+    // Desktop and phone hosts need genuinely different sizing rules, not
+    // one compromise value - a cap small enough to avoid overflowing a
+    // phone screen leaves desktop far too small, and anything generous
+    // enough for desktop overflows on a phone. Qt.platform.os is a
+    // standard Qt/QML global, independent of anything VESC Tool-specific.
+    readonly property bool isMobilePlatform: Qt.platform.os === "android" || Qt.platform.os === "ios"
     property string tabTitle: "CarMap"
     property bool isHorizontal: width > height
     property Commands vescCommands: VescIf.commands()
@@ -380,19 +386,31 @@ Item {
                 // NOT Layout.fillHeight - the debug overlays proved this
                 // host never gives our page a real height to fill on
                 // desktop (every tab measured height=0 while width was a
-                // real number). A fixed 900px "fixed it" on desktop but
-                // then badly overflowed onto the next swipeable page on
-                // mobile. Computing it from mainItem.parent.height still
-                // overflowed too, which means mainItem.parent's height
-                // can't be fully trusted either on every host - so on top
-                // of that computation, hard-clamp the result to a maximum
-                // that should never overflow even a small phone screen,
-                // instead of trusting any single size source completely.
-                property real wantedHeight: mainItem.parent
-                    ? Math.max(280, Math.min(620, mainItem.parent.height - headerRow.height - tabBar.height - 32))
-                    : 560
+                // real number), so desktop needs a large, generous size
+                // to look right. A single cap small enough to never
+                // overflow a phone screen left desktop far too small -
+                // desktop and mobile need genuinely different numbers,
+                // not one compromise (see isMobilePlatform above).
+                property real wantedHeight: {
+                    if (mainItem.isMobilePlatform) {
+                        // Phones: stay conservative and hard-capped low -
+                        // mainItem.parent.height has proven unreliable
+                        // for this on at least one mobile host, so don't
+                        // fully trust it even as the basis of a computed
+                        // value; clamp hard regardless of what it reports.
+                        return mainItem.parent
+                            ? Math.max(240, Math.min(420, mainItem.parent.height - headerRow.height - tabBar.height - 24))
+                            : 380
+                    }
+                    // Desktop: generous, computed from the real (proven
+                    // reactive here) parent size, with a high ceiling
+                    // that's really just a sanity bound, not a real cap.
+                    return mainItem.parent
+                        ? Math.max(400, Math.min(1400, mainItem.parent.height - headerRow.height - tabBar.height - 32))
+                        : 900
+                }
                 Layout.preferredHeight: wantedHeight
-                Layout.maximumHeight: 620
+                Layout.maximumHeight: mainItem.isMobilePlatform ? 420 : 1400
                 height: wantedHeight // belt-and-braces, see the comment
                                      // on the Pane's width/height binding
                 currentIndex: tabBar.currentIndex
