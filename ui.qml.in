@@ -29,7 +29,7 @@ Item {
     anchors.fill: parent
     // Bumped on every edit - shown in the header as "build N" so a
     // stale/cached install is obvious at a glance instead of ambiguous.
-    property int buildMarker: 26
+    property int buildMarker: 27
     // Desktop and phone hosts need genuinely different sizing rules, not
     // one compromise value - a cap small enough to avoid overflowing a
     // phone screen leaves desktop far too small, and anything generous
@@ -631,52 +631,86 @@ Item {
                             onClicked: { regenerateLocalMap(); sendSetConfig() }
                         }
                     }
-                    GridLayout {
-                        columns: 3
-                        columnSpacing: 10; rowSpacing: 6
+                    // Stacked (label+value row, slider below), not a
+                    // rigid 3-column grid: a GridLayout's columns each
+                    // need enough room for their widest cell at once and
+                    // refuse to shrink past that - confirmed on real
+                    // hardware as the actual cause of content shifting
+                    // out of frame below a certain window/screen width,
+                    // on desktop as much as on mobile. A slider alone on
+                    // its own full-width row has no such minimum.
+                    ColumnLayout {
                         Layout.fillWidth: true
+                        spacing: 10
 
-                        Label { text: "Torque response"; color: "#ccc" }
-                        Slider { Layout.fillWidth: true; from: 0.3; to: 2.0; value: cfgTorqueResp; onMoved: { cfgTorqueResp = value; cfgPreset = 0; regenerateLocalMap() } }
-                        Label { text: cfgTorqueResp.toFixed(2); color: "#fff" }
-
-                        Label { text: "Speed coupling"; color: "#ccc" }
-                        Slider { Layout.fillWidth: true; from: 0.0; to: 1.5; value: cfgSpeedCoupling; onMoved: { cfgSpeedCoupling = value; cfgPreset = 0; regenerateLocalMap() } }
-                        Label { text: cfgSpeedCoupling.toFixed(2); color: "#fff" }
-
-                        Label { text: "Transition width"; color: "#ccc" }
-                        Slider { Layout.fillWidth: true; from: 0.02; to: 0.30; value: cfgTransWidth; onMoved: { cfgTransWidth = value; cfgPreset = 0; regenerateLocalMap() } }
-                        Label { text: (cfgTransWidth*100).toFixed(0) + " %"; color: "#fff" }
-
-                        Label { text: "Transition shape"; color: "#ccc" }
-                        ComboBox {
-                            Layout.fillWidth: true
-                            model: ["Linear", "Progressive", "Exponential", "Late/abrupt"]
-                            currentIndex: cfgTransShape
-                            onActivated: (idx) => { cfgTransShape = idx; cfgPreset = 0; regenerateLocalMap() }
+                        ColumnLayout {
+                            Layout.fillWidth: true; spacing: 2
+                            RowLayout { Layout.fillWidth: true
+                                Label { text: "Torque response"; color: "#ccc"; Layout.fillWidth: true }
+                                Label { text: cfgTorqueResp.toFixed(2); color: "#fff" }
+                            }
+                            Slider { Layout.fillWidth: true; from: 0.3; to: 2.0; value: cfgTorqueResp; onMoved: { cfgTorqueResp = value; cfgPreset = 0; regenerateLocalMap() } }
                         }
-                        Item {}
-
-                        Label { text: "High throttle hold"; color: "#ccc" }
-                        Slider { Layout.fillWidth: true; from: 0.0; to: 1.0; value: cfgHighHold; onMoved: { cfgHighHold = value; cfgPreset = 0; regenerateLocalMap() } }
-                        Label { text: cfgHighHold.toFixed(2); color: "#fff" }
-
-                        Label { text: "Engine braking"; color: "#ccc" }
-                        Slider { Layout.fillWidth: true; from: 0.0; to: 0.6; value: cfgEngineBrake; onMoved: { cfgEngineBrake = value; cfgPreset = 0; regenerateLocalMap() } }
-                        Label { text: cfgEngineBrake.toFixed(2); color: "#fff" }
-
-                        Label { text: "Overrun regen"; color: "#ccc" }
-                        Slider { Layout.fillWidth: true; from: 0.0; to: 0.5; value: cfgOverrunRegen; onMoved: { cfgOverrunRegen = value; cfgPreset = 0; regenerateLocalMap() } }
-                        Label { text: cfgOverrunRegen.toFixed(2); color: "#fff" }
-
-                        Label { text: "Regen curve"; color: "#ccc" }
-                        ComboBox {
-                            Layout.fillWidth: true
-                            model: ["Linear", "Progressive", "Late"]
-                            currentIndex: cfgRegenCurve
-                            onActivated: (idx) => { cfgRegenCurve = idx; cfgPreset = 0; regenerateLocalMap() }
+                        ColumnLayout {
+                            Layout.fillWidth: true; spacing: 2
+                            RowLayout { Layout.fillWidth: true
+                                Label { text: "Speed coupling"; color: "#ccc"; Layout.fillWidth: true }
+                                Label { text: cfgSpeedCoupling.toFixed(2); color: "#fff" }
+                            }
+                            Slider { Layout.fillWidth: true; from: 0.0; to: 1.5; value: cfgSpeedCoupling; onMoved: { cfgSpeedCoupling = value; cfgPreset = 0; regenerateLocalMap() } }
                         }
-                        Item {}
+                        ColumnLayout {
+                            Layout.fillWidth: true; spacing: 2
+                            RowLayout { Layout.fillWidth: true
+                                Label { text: "Transition width"; color: "#ccc"; Layout.fillWidth: true }
+                                Label { text: (cfgTransWidth*100).toFixed(0) + " %"; color: "#fff" }
+                            }
+                            Slider { Layout.fillWidth: true; from: 0.02; to: 0.30; value: cfgTransWidth; onMoved: { cfgTransWidth = value; cfgPreset = 0; regenerateLocalMap() } }
+                        }
+                        ColumnLayout {
+                            Layout.fillWidth: true; spacing: 2
+                            Label { text: "Transition shape"; color: "#ccc" }
+                            ComboBox {
+                                Layout.fillWidth: true
+                                model: ["Linear", "Progressive", "Exponential", "Late/abrupt"]
+                                currentIndex: cfgTransShape
+                                onActivated: (idx) => { cfgTransShape = idx; cfgPreset = 0; regenerateLocalMap() }
+                            }
+                        }
+                        ColumnLayout {
+                            Layout.fillWidth: true; spacing: 2
+                            RowLayout { Layout.fillWidth: true
+                                Label { text: "High throttle hold"; color: "#ccc"; Layout.fillWidth: true }
+                                Label { text: cfgHighHold.toFixed(2); color: "#fff" }
+                            }
+                            Slider { Layout.fillWidth: true; from: 0.0; to: 1.0; value: cfgHighHold; onMoved: { cfgHighHold = value; cfgPreset = 0; regenerateLocalMap() } }
+                        }
+                        ColumnLayout {
+                            Layout.fillWidth: true; spacing: 2
+                            RowLayout { Layout.fillWidth: true
+                                Label { text: "Engine braking"; color: "#ccc"; Layout.fillWidth: true }
+                                Label { text: cfgEngineBrake.toFixed(2); color: "#fff" }
+                            }
+                            Slider { Layout.fillWidth: true; from: 0.0; to: 0.6; value: cfgEngineBrake; onMoved: { cfgEngineBrake = value; cfgPreset = 0; regenerateLocalMap() } }
+                        }
+                        ColumnLayout {
+                            Layout.fillWidth: true; spacing: 2
+                            RowLayout { Layout.fillWidth: true
+                                Label { text: "Overrun regen"; color: "#ccc"; Layout.fillWidth: true }
+                                Label { text: cfgOverrunRegen.toFixed(2); color: "#fff" }
+                            }
+                            Slider { Layout.fillWidth: true; from: 0.0; to: 0.5; value: cfgOverrunRegen; onMoved: { cfgOverrunRegen = value; cfgPreset = 0; regenerateLocalMap() } }
+                        }
+                        ColumnLayout {
+                            Layout.fillWidth: true; spacing: 2
+                            Label { text: "Regen curve"; color: "#ccc" }
+                            ComboBox {
+                                Layout.fillWidth: true
+                                model: ["Linear", "Progressive", "Late"]
+                                currentIndex: cfgRegenCurve
+                                onActivated: (idx) => { cfgRegenCurve = idx; cfgPreset = 0; regenerateLocalMap() }
+                            }
+                        }
                     }
                     Button {
                         text: "Send to VESC (generate authoritative map)"
@@ -1193,21 +1227,41 @@ Item {
                         }
                     }
 
-                    GridLayout {
-                        columns: 3
-                        columnSpacing: 10; rowSpacing: 8
-                        Label { text: "Min (raw 0..1)"; color: "#ccc" }
-                        Slider { from: 0; to: 0.5; value: thrMin; onMoved: thrMin = value }
-                        Label { text: thrMin.toFixed(2); color: "#fff" }
-                        Label { text: "Max (raw 0..1)"; color: "#ccc" }
-                        Slider { from: 0.5; to: 1.0; value: thrMax; onMoved: thrMax = value }
-                        Label { text: thrMax.toFixed(2); color: "#fff" }
-                        Label { text: "Deadband"; color: "#ccc" }
-                        Slider { from: 0; to: 0.15; value: thrDeadband; onMoved: thrDeadband = value }
-                        Label { text: thrDeadband.toFixed(2); color: "#fff" }
-                        Label { text: "Filter (low-pass)"; color: "#ccc" }
-                        Slider { from: 0; to: 1.0; value: thrFilter; onMoved: thrFilter = value }
-                        Label { text: thrFilter.toFixed(2); color: "#fff" }
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 10
+                        ColumnLayout {
+                            Layout.fillWidth: true; spacing: 2
+                            RowLayout { Layout.fillWidth: true
+                                Label { text: "Min (raw 0..1)"; color: "#ccc"; Layout.fillWidth: true }
+                                Label { text: thrMin.toFixed(2); color: "#fff" }
+                            }
+                            Slider { Layout.fillWidth: true; from: 0; to: 0.5; value: thrMin; onMoved: thrMin = value }
+                        }
+                        ColumnLayout {
+                            Layout.fillWidth: true; spacing: 2
+                            RowLayout { Layout.fillWidth: true
+                                Label { text: "Max (raw 0..1)"; color: "#ccc"; Layout.fillWidth: true }
+                                Label { text: thrMax.toFixed(2); color: "#fff" }
+                            }
+                            Slider { Layout.fillWidth: true; from: 0.5; to: 1.0; value: thrMax; onMoved: thrMax = value }
+                        }
+                        ColumnLayout {
+                            Layout.fillWidth: true; spacing: 2
+                            RowLayout { Layout.fillWidth: true
+                                Label { text: "Deadband"; color: "#ccc"; Layout.fillWidth: true }
+                                Label { text: thrDeadband.toFixed(2); color: "#fff" }
+                            }
+                            Slider { Layout.fillWidth: true; from: 0; to: 0.15; value: thrDeadband; onMoved: thrDeadband = value }
+                        }
+                        ColumnLayout {
+                            Layout.fillWidth: true; spacing: 2
+                            RowLayout { Layout.fillWidth: true
+                                Label { text: "Filter (low-pass)"; color: "#ccc"; Layout.fillWidth: true }
+                                Label { text: thrFilter.toFixed(2); color: "#fff" }
+                            }
+                            Slider { Layout.fillWidth: true; from: 0; to: 1.0; value: thrFilter; onMoved: thrFilter = value }
+                        }
                     }
                     Button { text: "Apply throttle settings"; onClicked: sendSetThrottle() }
 
