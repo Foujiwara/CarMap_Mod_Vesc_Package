@@ -29,7 +29,7 @@ Item {
     anchors.fill: parent
     // Bumped on every edit - shown in the header as "build N" so a
     // stale/cached install is obvious at a glance instead of ambiguous.
-    property int buildMarker: 28
+    property int buildMarker: 29
     // Desktop and phone hosts need genuinely different sizing rules, not
     // one compromise value - a cap small enough to avoid overflowing a
     // phone screen leaves desktop far too small, and anything generous
@@ -369,25 +369,37 @@ Item {
             RowLayout {
                 id: headerRow
                 Layout.fillWidth: true
-                Label { text: "CarMap Thermal Throttle"; font.pixelSize: 30; font.bold: true; color: "#e8e8e8" }
+                // This row was never audited for the same overflow class
+                // as everything below it - a plain Label defaults its
+                // Layout.minimumWidth to its own full text, so 4-5 fixed
+                // labels side by side here (title + build + debug + dot +
+                // status) could force this row, and therefore the whole
+                // page above the tab bar, wider than a phone screen no
+                // matter what gets fixed further down. Every label here
+                // now either elides or is deliberately kept very short.
+                Label {
+                    text: "CarMap Thermal Throttle"
+                    font.pixelSize: 30; font.bold: true; color: "#e8e8e8"
+                    Layout.fillWidth: true
+                    elide: Text.ElideRight
+                }
                 // Bump buildMarker on every edit to this file so a stale/
                 // cached install is immediately obvious instead of
                 // ambiguous - "still the same" is either a real no-op fix
                 // or a cache; this number tells them apart at a glance.
-                Label { text: "build " + buildMarker; color: "#f80"; font.bold: true }
+                Label { text: "b" + buildMarker; color: "#f80"; font.bold: true }
                 Label {
-                    font.pixelSize: 11; color: "#0f0"
-                    text: "w:" + Math.round(mainItem.width) +
-                          " pw:" + (mainItem.parent ? Math.round(mainItem.parent.width) : "?") +
-                          " scr:" + Math.round(Screen.width) +
-                          " dpr:" + Screen.devicePixelRatio.toFixed(2)
+                    font.pixelSize: 10; color: "#0f0"
+                    Layout.maximumWidth: 160
+                    elide: Text.ElideRight
+                    text: "w" + Math.round(mainItem.width) +
+                          "/p" + (mainItem.parent ? Math.round(mainItem.parent.width) : 0) +
+                          "/s" + Math.round(Screen.width)
                 }
-                Item { Layout.fillWidth: true }
                 Rectangle {
                     width: 10; height: 10; radius: 5
                     color: statusText === "Connected" ? "#33cc66" : "#888888"
                 }
-                Label { text: statusText; color: "#bbbbbb" }
             }
 
             TabBar {
@@ -614,10 +626,12 @@ Item {
                     // map-shaping sliders, right next to the heatmap so
                     // dragging them shows their effect immediately.
                     Label { text: "Preset & map shape"; font.bold: true; color: "#ddd" }
-                    RowLayout {
+                    Flow {
+                        Layout.fillWidth: true
+                        spacing: 6
                         ComboBox {
                             id: presetComboMap
-                            Layout.preferredWidth: 220
+                            width: 180
                             model: presets.map(function(p){ return p.name })
                             currentIndex: cfgPreset
                             onActivated: (idx) => {
@@ -1277,7 +1291,13 @@ Item {
                     Rectangle { Layout.fillWidth: true; height: 1; color: "#333" }
 
                     Label { text: "Persistence"; font.bold: true; color: "#ddd" }
-                    RowLayout {
+                    // Flow, not RowLayout: 4 buttons with fairly long
+                    // labels never shrink and never wrap in a RowLayout,
+                    // which was overflowing narrow widths - Flow wraps
+                    // to a new line instead of forcing the row wider.
+                    Flow {
+                        Layout.fillWidth: true
+                        spacing: 6
                         Button { text: "Save to VESC"; onClicked: sendSave() }
                         Button { text: "Load from VESC"; onClicked: { sendLoad(); requestMap(); requestCfg() } }
                         Button { text: "Reset to defaults"; onClicked: { sendReset(); requestMap(); requestCfg() } }
@@ -1291,7 +1311,9 @@ Item {
                         text: "There is no supported way for a package's QML to write an arbitrary local file in VESC Tool, so export/import goes through plain text you copy/paste yourself."
                         color: "#777"; wrapMode: Text.WordWrap; Layout.fillWidth: true; font.pixelSize: 16
                     }
-                    RowLayout {
+                    Flow {
+                        Layout.fillWidth: true
+                        spacing: 6
                         Button { text: "Export to text"; onClicked: exportArea.text = JSON.stringify({ map: mapData, cfg: {
                             preset: cfgPreset, torqueResp: cfgTorqueResp, speedCoupling: cfgSpeedCoupling,
                             transWidth: cfgTransWidth, transShape: cfgTransShape, highHold: cfgHighHold,
