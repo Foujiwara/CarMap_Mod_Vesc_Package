@@ -22,10 +22,12 @@ voltage) remain fully in charge.
 
 ## Setup (one-time, in VESC Tool)
 
-1. In **App Settings**, set the control type of whichever input you plan
-   to use (ADC / PPM / UART app) to **Off**. This package reads the raw
-   input directly and drives the motor itself; leaving the app's own
-   control type enabled would fight it.
+1. In **App Settings**, keep the app for your input (ADC / PPM / UART)
+   **enabled**, and set only its **Control Type** dropdown to **Off**.
+   Disabling the app entirely also stops it decoding the signal, so
+   this package would see no input; leaving Control Type on anything
+   else means the app and this package both try to drive the motor at
+   once, which shows up as jerky/stuttering acceleration.
 2. Open the **CarMap** tab.
 3. Pick a throttle source and calibrate min/max/deadband if needed.
 4. Pick a preset (Thermal Street / Thermal Race / Wet / Direct Electric)

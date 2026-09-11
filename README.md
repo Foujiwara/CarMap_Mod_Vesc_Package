@@ -71,11 +71,19 @@ and `lisp/package.lisp` from this repo -> **Pack** -> save as
 
 1. VESC Tool -> **VESC Packages** -> install the built/downloaded
    `carmap_thermal_throttle.vescpkg` onto your VESC.
-2. In **App Settings**, set the control type of the input you intend to
-   use (ADC / PPM / UART app) to **Off** - this package reads the raw
-   input itself and drives the motor directly; leaving the app enabled
-   would fight it. This is the one existing setting this package expects
-   you to change; it does not touch anything else in your motor/app config.
+2. In **App Settings**, keep the app for the input you intend to use
+   (ADC / PPM / UART) **enabled/active** - just change its **Control
+   Type** dropdown to **Off** (`ADC_CTRL_TYPE_NONE` / equivalent). This
+   is two different settings: disabling the app entirely also stops it
+   decoding the signal at all, so this package would see no input
+   either; leaving Control Type on anything other than Off means the
+   app *and* this package both try to drive the motor from the same
+   signal at once, which shows up as jerky/stuttering acceleration
+   (confirmed on real hardware - see the LIVE feedback: if `Throttle`
+   never moves, the app is decoding nothing; if the motor stutters
+   in bursts, the app's own control type is still active). This is the
+   one existing setting this package expects you to change; it does
+   not touch anything else in your motor/app config.
 3. Open the new **CarMap** tab, pick a throttle source + calibration, pick
    a preset (or tune the Configurator by hand), **Apply parameters ->
    generate map**, then **Save to VESC**.
