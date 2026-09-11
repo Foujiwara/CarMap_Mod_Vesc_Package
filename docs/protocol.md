@@ -20,7 +20,7 @@ small without sending raw floats over the wire.
 | 0x01 | SET_CELL | `thr_idx:u8 duty_idx:u8 value:i16` |
 | 0x02 | SET_MAP_ROW | `row_idx:u8 value0:i16 ... value20:i16` (21 cells) |
 | 0x03 | SET_CONFIG | `preset:u8 torque_resp:i16 speed_coupling:i16 trans_width:i16 trans_shape:u8 high_hold:i16 engine_brake:i16 overrun_regen:i16 regen_curve:u8` |
-| 0x04 | SET_THROTTLE | `source:u8 invert:u8 min:i16 max:i16 deadband:i16 filter:i16 brake_enable:u8` |
+| 0x04 | SET_THROTTLE | `source:u8 invert:u8 min:i16 max:i16 deadband:i16 filter:i16 brake_mode:u8 (0=off 1=dual 2=bidir)` |
 | 0x05 | CMD_SAVE | (none) |
 | 0x06 | CMD_LOAD | (none) |
 | 0x07 | CMD_RESET | (none) |
@@ -52,7 +52,7 @@ updates the stored parameters, leaving any manually-edited cells alone.
 | 0x80 | LIVE | `throttle:i16 duty:i16 erpm:i32 cur_rel:i16 cur_a:i16(x100) brake:i16` |
 | 0x81 | MAP_ROW | `row_idx:u8 value0:i16 ... value20:i16` |
 | 0x82 | STATUS | `code:u8` (0=ok, 1=saved, 2=loaded, 3=reset) |
-| 0x83 | CFG_ECHO | mirrors the payloads of 0x03 then 0x04, concatenated, with `brake_enable:u8` appended at the end |
+| 0x83 | CFG_ECHO | mirrors the payloads of 0x03 then 0x04, concatenated, with `brake_mode:u8 (0=off 1=dual 2=bidir)` appended at the end |
 
 `LIVE` is sent unconditionally at ~20 Hz whenever the package is running,
 whether or not VESC Tool is even connected (`send-data` is a no-op if

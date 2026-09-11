@@ -34,16 +34,26 @@
 
 (define thr-filtered 0.0)
 
-; Independent brake channel (ADC only, for now): a second ADC input
-; (channel 1, i.e. ADC2 on the COMM port) read as its own 0..1 value with
-; the same calibration as the main channel, for setups with a separate
-; accelerator and brake pedal/lever each giving their own 0-100% signal -
-; not a single bidirectional (center-zero) throttle. When active and
-; above its deadband, it overrides the map entirely with a direct,
-; proportional negative current-rel (see control-loop in package.lisp);
-; the thermal map's own throttle-released braking still applies whenever
-; this channel is enabled but at rest.
-(define thr-cfg-brake-enable 0)
+; Braking beyond the map's own throttle-released engine braking (ADC
+; only, for now). Two different physical setups, both ADC-only:
+;   0 = off (only the map's own engine braking applies)
+;   1 = dual channel: a separate brake pedal/lever on ADC2 (channel 1),
+;       its own independent 0..1 signal, calibrated the same way as the
+;       main channel (accelerator and brake are two physical inputs)
+;   2 = bidirectional: ONE center-zero ADC1 input covers both - above
+;       center is accelerator, below center is brake. get-adc-decoded is
+;       always 0..1 regardless of the app's own reverse capability, so
+;       this mode reads the raw voltage (get-adc) and the ADC app's own
+;       calibration (conf-get 'adc-v1-start/-center/-end, set in App
+;       Settings -> ADC) instead of decoding it a second time.
+; Either way, when the brake side is above its deadband it overrides the
+; map entirely with a direct, proportional negative current-rel (see
+; control-loop in package.lisp); the map's own throttle-released
+; braking still applies whenever the brake reads 0 (at rest, or off).
+(define thr-brake-none  0)
+(define thr-brake-dual  1)
+(define thr-brake-bidir 2)
+(define thr-cfg-brake-mode thr-brake-none)
 
 ; UART throttle: a tiny 3-byte frame so noise on the line can't be mistaken
 ; for a valid reading. Frame: <0xA5> <percent 0..200, meaning 0..100.0%>
@@ -79,10 +89,29 @@
         uart-last-raw))
     ))
 
+; Bidirectional single-channel ADC1 read, using the ADC app's OWN
+; start/center/end calibration (App Settings -> ADC) rather than this
+; package's own min/max, since those three values already fully
+; describe a center-zero throttle. Returns a signed -1..1 value: >0 is
+; the accelerator side, <0 is the brake side, both already fractions of
+; their own half of the range (no separate normalize step needed).
+(defun thr-adc-signed ()
+    (let ((raw (get-adc 0))
+          (v-start (conf-get 'adc-v1-start))
+          (v-center (conf-get 'adc-v1-center))
+          (v-end (conf-get 'adc-v1-end)))
+    (if (>= raw v-center)
+        (clamp01 (/ (- raw v-center) (max-f 0.001 (- v-end v-center))))
+        (- (clamp01 (/ (- v-center raw) (max-f 0.001 (- v-center v-start)))))
+    )))
+
 ; Raw, source-specific, still 0..1.
 (defun thr-read-raw ()
     (cond
-        ((= thr-cfg-source thr-src-adc) (get-adc-decoded 0))
+        ((= thr-cfg-source thr-src-adc)
+            (if (= thr-cfg-brake-mode thr-brake-bidir)
+                (max-f 0.0 (thr-adc-signed))
+                (get-adc-decoded 0)))
         ((= thr-cfg-source thr-src-ppm) (max-f 0.0 (get-ppm)))
         ((= thr-cfg-source thr-src-uart) (uart-throttle-raw))
         ((= thr-cfg-source thr-src-test) thr-test-value)
@@ -100,30 +129,39 @@
     )))))
 
 ; Public entry point: read + normalize + low-pass filter. Call once per
-; control loop iteration. The Test source skips calibration (see
-; thr-src-test above) but still gets the low-pass filter so bench-test
-; behavior matches every other source.
+; control loop iteration. The Test source and bidirectional-ADC mode
+; both skip this package's own min/max/deadband/invert calibration
+; (Test because the UI already sends a clean 0..1 value; bidirectional
+; because thr-adc-signed already normalized against the ADC app's own
+; start/center/end calibration) but still go through the low-pass
+; filter so behavior matches every other source.
 (defun thr-read ()
-    (let ((n (if (= thr-cfg-source thr-src-test)
-                 (clamp01 (thr-read-raw))
-                 (thr-normalize (thr-read-raw)))))
+    (let ((skip-normalize (or (= thr-cfg-source thr-src-test)
+                               (and (= thr-cfg-source thr-src-adc) (= thr-cfg-brake-mode thr-brake-bidir)))))
+    (let ((n (if skip-normalize (clamp01 (thr-read-raw)) (thr-normalize (thr-read-raw)))))
     (progn
         (setq thr-filtered (+ thr-filtered (* thr-cfg-filter (- n thr-filtered))))
         thr-filtered)
-    ))
+    )))
 
-; Independent brake channel: ADC2 (channel 1), same min/max/deadband
-; calibration as the main channel (but never inverted - that setting is
-; about the accelerator's own direction, not this separate lever), no
-; filtering (a brake benefits from being immediate, not smoothed).
-; Returns 0.0 when disabled or on any non-ADC source, since a second
-; physical channel only makes sense alongside a real ADC setup.
+; Brake side, 0..1. Dual mode reads ADC2 (channel 1) with the same
+; min/max/deadband calibration as the main channel (never inverted -
+; that setting is about the accelerator's own direction, not this
+; separate lever); bidirectional mode reads the negative half of
+; thr-adc-signed (already calibrated against the ADC app's own
+; start/center/end). No filtering either way - a brake benefits from
+; being immediate, not smoothed. Returns 0.0 when off or on any
+; non-ADC source, since these are ADC-specific setups.
 (defun thr-brake-read ()
-    (if (and (= thr-cfg-brake-enable 1) (= thr-cfg-source thr-src-adc))
-        (let ((v (/ (- (get-adc-decoded 1) thr-cfg-min) (max-f 0.001 (- thr-cfg-max thr-cfg-min)))))
-        (let ((vc (clamp01 v)))
-        (if (< vc thr-cfg-deadband) 0.0
-            (clamp01 (/ (- vc thr-cfg-deadband) (max-f 0.001 (- 1.0 thr-cfg-deadband)))))
-        ))
-        0.0
+    (cond
+        ((not (= thr-cfg-source thr-src-adc)) 0.0)
+        ((= thr-cfg-brake-mode thr-brake-dual)
+            (let ((v (/ (- (get-adc-decoded 1) thr-cfg-min) (max-f 0.001 (- thr-cfg-max thr-cfg-min)))))
+            (let ((vc (clamp01 v)))
+            (if (< vc thr-cfg-deadband) 0.0
+                (clamp01 (/ (- vc thr-cfg-deadband) (max-f 0.001 (- 1.0 thr-cfg-deadband)))))
+            )))
+        ((= thr-cfg-brake-mode thr-brake-bidir)
+            (max-f 0.0 (- (thr-adc-signed))))
+        (t 0.0)
     ))
