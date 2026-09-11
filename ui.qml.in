@@ -19,7 +19,7 @@ Item {
     id: mainItem
     // Bumped on every edit - shown in the header as "build N" so a
     // stale/cached install is obvious at a glance instead of ambiguous.
-    property int buildMarker: 20
+    property int buildMarker: 21
     // Desktop and phone hosts need genuinely different sizing rules, not
     // one compromise value - a cap small enough to avoid overflowing a
     // phone screen leaves desktop far too small, and anything generous
@@ -344,6 +344,15 @@ Item {
         x: 0; y: 0
         width: mainItem.parent ? mainItem.parent.width : mainItem.width
         height: mainItem.parent ? mainItem.parent.height : mainItem.height
+        // Hard clip everything to these bounds. Confirmed on a phone:
+        // switching to a different VESC Tool tab (RT Data) left a
+        // leftover render of this page's heatmap Canvas visibly
+        // floating over it - a real visual overflow, not just a wrong
+        // height number. No amount of correctly-computed height fixes
+        // that on its own; clipping guarantees nothing we draw can ever
+        // paint outside our own bounds, no matter what causes an
+        // internal size to be miscalculated on some host.
+        clip: true
         padding: 0
         font.pixelSize: 22 // bump this if the UI still isn't big enough
         background: Rectangle { color: "#15181d" }
@@ -411,8 +420,14 @@ Item {
                 }
                 Layout.preferredHeight: wantedHeight
                 Layout.maximumHeight: mainItem.isMobilePlatform ? 420 : 1400
-                height: wantedHeight // belt-and-braces, see the comment
-                                     // on the Pane's width/height binding
+                // NOT also a bare `height: wantedHeight` here - a Layout
+                // arranges its own managed children's geometry each
+                // pass, and a plain `height` set directly on one of them
+                // fights that instead of cooperating with it. Mixing the
+                // two was the likely cause of a large empty gap seen
+                // above the heatmap on a phone: the Layout's arrangement
+                // and this property's own value could disagree about
+                // where content actually starts.
                 currentIndex: tabBar.currentIndex
 
                 // Everything below is defined inline (not as separate QML
