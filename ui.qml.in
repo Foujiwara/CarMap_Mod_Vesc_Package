@@ -29,7 +29,7 @@ Item {
     anchors.fill: parent
     // Bumped on every edit - shown in the header as "build N" so a
     // stale/cached install is obvious at a glance instead of ambiguous.
-    property int buildMarker: 29
+    property int buildMarker: 30
     // Desktop and phone hosts need genuinely different sizing rules, not
     // one compromise value - a cap small enough to avoid overflowing a
     // phone screen leaves desktop far too small, and anything generous
@@ -273,6 +273,18 @@ Item {
         if (shape === 2) return 1 - Math.pow(1-p, 3)
         return Math.pow(p, 4)
     }
+    // Dragging a slider fires onMoved many times per second; calling
+    // regenerateLocalMap() straight from onMoved recomputes all 441
+    // cells and forces the heatmap/curve/iso Canvases to fully redraw
+    // on every single tick of the drag, which is what was actually
+    // causing the reported lag - not the drawing itself (that part was
+    // already split into cheap/expensive layers earlier). Route slider
+    // handlers through requestRegen() instead: it only restarts a short
+    // timer, so the real recompute+redraw happens once, shortly after
+    // the user stops moving the slider, not on every pixel of the drag.
+    property Timer regenDebounce: Timer { interval: 60; onTriggered: regenerateLocalMap() }
+    function requestRegen() { regenDebounce.restart() }
+
     function regenerateLocalMap() {
         var arr = mapData.slice()
         for (var ti = 0; ti < mapN; ti++) {
@@ -663,7 +675,7 @@ Item {
                                 Label { text: "Torque response"; color: "#ccc"; Layout.fillWidth: true; elide: Text.ElideRight }
                                 Label { text: cfgTorqueResp.toFixed(2); color: "#fff" }
                             }
-                            Slider { Layout.fillWidth: true; from: 0.3; to: 2.0; value: cfgTorqueResp; onMoved: { cfgTorqueResp = value; cfgPreset = 0; regenerateLocalMap() } }
+                            Slider { Layout.fillWidth: true; from: 0.3; to: 2.0; value: cfgTorqueResp; onMoved: { cfgTorqueResp = value; cfgPreset = 0; requestRegen() } }
                         }
                         ColumnLayout {
                             Layout.fillWidth: true; spacing: 2
@@ -671,7 +683,7 @@ Item {
                                 Label { text: "Speed coupling"; color: "#ccc"; Layout.fillWidth: true; elide: Text.ElideRight }
                                 Label { text: cfgSpeedCoupling.toFixed(2); color: "#fff" }
                             }
-                            Slider { Layout.fillWidth: true; from: 0.0; to: 1.5; value: cfgSpeedCoupling; onMoved: { cfgSpeedCoupling = value; cfgPreset = 0; regenerateLocalMap() } }
+                            Slider { Layout.fillWidth: true; from: 0.0; to: 1.5; value: cfgSpeedCoupling; onMoved: { cfgSpeedCoupling = value; cfgPreset = 0; requestRegen() } }
                         }
                         ColumnLayout {
                             Layout.fillWidth: true; spacing: 2
@@ -679,7 +691,7 @@ Item {
                                 Label { text: "Transition width"; color: "#ccc"; Layout.fillWidth: true; elide: Text.ElideRight }
                                 Label { text: (cfgTransWidth*100).toFixed(0) + " %"; color: "#fff" }
                             }
-                            Slider { Layout.fillWidth: true; from: 0.02; to: 0.30; value: cfgTransWidth; onMoved: { cfgTransWidth = value; cfgPreset = 0; regenerateLocalMap() } }
+                            Slider { Layout.fillWidth: true; from: 0.02; to: 0.30; value: cfgTransWidth; onMoved: { cfgTransWidth = value; cfgPreset = 0; requestRegen() } }
                         }
                         ColumnLayout {
                             Layout.fillWidth: true; spacing: 2
@@ -697,7 +709,7 @@ Item {
                                 Label { text: "High throttle hold"; color: "#ccc"; Layout.fillWidth: true; elide: Text.ElideRight }
                                 Label { text: cfgHighHold.toFixed(2); color: "#fff" }
                             }
-                            Slider { Layout.fillWidth: true; from: 0.0; to: 1.0; value: cfgHighHold; onMoved: { cfgHighHold = value; cfgPreset = 0; regenerateLocalMap() } }
+                            Slider { Layout.fillWidth: true; from: 0.0; to: 1.0; value: cfgHighHold; onMoved: { cfgHighHold = value; cfgPreset = 0; requestRegen() } }
                         }
                         ColumnLayout {
                             Layout.fillWidth: true; spacing: 2
@@ -705,7 +717,7 @@ Item {
                                 Label { text: "Engine braking"; color: "#ccc"; Layout.fillWidth: true; elide: Text.ElideRight }
                                 Label { text: cfgEngineBrake.toFixed(2); color: "#fff" }
                             }
-                            Slider { Layout.fillWidth: true; from: 0.0; to: 0.6; value: cfgEngineBrake; onMoved: { cfgEngineBrake = value; cfgPreset = 0; regenerateLocalMap() } }
+                            Slider { Layout.fillWidth: true; from: 0.0; to: 0.6; value: cfgEngineBrake; onMoved: { cfgEngineBrake = value; cfgPreset = 0; requestRegen() } }
                         }
                         ColumnLayout {
                             Layout.fillWidth: true; spacing: 2
@@ -713,7 +725,7 @@ Item {
                                 Label { text: "Overrun regen"; color: "#ccc"; Layout.fillWidth: true; elide: Text.ElideRight }
                                 Label { text: cfgOverrunRegen.toFixed(2); color: "#fff" }
                             }
-                            Slider { Layout.fillWidth: true; from: 0.0; to: 0.5; value: cfgOverrunRegen; onMoved: { cfgOverrunRegen = value; cfgPreset = 0; regenerateLocalMap() } }
+                            Slider { Layout.fillWidth: true; from: 0.0; to: 0.5; value: cfgOverrunRegen; onMoved: { cfgOverrunRegen = value; cfgPreset = 0; requestRegen() } }
                         }
                         ColumnLayout {
                             Layout.fillWidth: true; spacing: 2
@@ -826,25 +838,42 @@ Item {
             }
             function mapRowSlice(t) { var r = []; for (var d = 0; d < mapN; d++) r.push(getCell(t,d)); return r }
             function mapColSlice(d) { var r = []; for (var t = 0; t < mapN; t++) r.push(getCell(t,d)); return r }
+            // These used to call setCellLocal per cell, each doing its own
+            // full 441-element array copy + mapData reassignment (so a
+            // 441-cell selection did up to ~194,000 element copies, and
+            // every button click here forced multiple full canvas
+            // redraws instead of one). Batch the mutation into a single
+            // array copy and assign mapData exactly once instead.
             function bumpRow(t, delta) {
-                for (var d = 0; d < mapN; d++) setCellLocal(t, d, getCell(t,d) + delta)
+                var arr = mapData.slice()
+                for (var d = 0; d < mapN; d++) {
+                    var v = Math.max(-1, Math.min(1, getCell(t,d) + delta))
+                    arr[cellIdx(t, d)] = v
+                }
+                mapData = arr
                 sendSetMapRow(t)
             }
             function smoothRow(t) {
                 var row = mapRowSlice(t)
                 var out = row.slice()
                 for (var d = 1; d < mapN-1; d++) out[d] = (row[d-1] + row[d]*2 + row[d+1]) / 4
-                for (var d2 = 0; d2 < mapN; d2++) setCellLocal(t, d2, out[d2])
+                var arr = mapData.slice()
+                for (var d2 = 0; d2 < mapN; d2++) arr[cellIdx(t, d2)] = Math.max(-1, Math.min(1, out[d2]))
+                mapData = arr
                 sendSetMapRow(t)
             }
             function pasteRow(t) {
                 if (!clipboardRow) return
-                for (var d = 0; d < mapN; d++) setCellLocal(t, d, clipboardRow[d])
+                var arr = mapData.slice()
+                for (var d = 0; d < mapN; d++) arr[cellIdx(t, d)] = Math.max(-1, Math.min(1, clipboardRow[d]))
+                mapData = arr
                 sendSetMapRow(t)
             }
             function pasteCol(d) {
                 if (!clipboardCol) return
-                for (var t = 0; t < mapN; t++) setCellLocal(t, d, clipboardCol[t])
+                var arr = mapData.slice()
+                for (var t = 0; t < mapN; t++) arr[cellIdx(t, d)] = Math.max(-1, Math.min(1, clipboardCol[t]))
+                mapData = arr
                 for (var t2 = 0; t2 < mapN; t2++) sendSetMapRow(t2)
             }
             function interpolateSelection() {
@@ -852,16 +881,18 @@ Item {
                 var tmin = Math.min(selection.t0, selection.t1), tmax = Math.max(selection.t0, selection.t1)
                 var dmin = Math.min(selection.d0, selection.d1), dmax = Math.max(selection.d0, selection.d1)
                 var v0 = getCell(tmin, dmin), v1 = getCell(tmax, dmax)
+                var arr = mapData.slice()
                 var rows = {}
                 for (var t = tmin; t <= tmax; t++) {
                     var ft = tmax > tmin ? (t - tmin) / (tmax - tmin) : 0
                     for (var d = dmin; d <= dmax; d++) {
                         var fd = dmax > dmin ? (d - dmin) / (dmax - dmin) : 0
                         var f = (ft + fd) / (tmax > tmin || dmax > dmin ? (tmax>tmin && dmax>dmin ? 2 : 1) : 1)
-                        setCellLocal(t, d, v0 + (v1 - v0) * f)
+                        arr[cellIdx(t, d)] = Math.max(-1, Math.min(1, v0 + (v1 - v0) * f))
                     }
                     rows[t] = true
                 }
+                mapData = arr
                 for (var key in rows) sendSetMapRow(parseInt(key))
             }
         }
