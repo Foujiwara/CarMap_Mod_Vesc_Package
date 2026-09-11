@@ -30,19 +30,30 @@
 (define live-duty 0.0)
 (define live-erpm 0.0)
 (define live-cur-rel 0.0)
+(define live-brake 0.0)
 
 ; ---------------------------------------------------------------------
 ; Control loop: read inputs, look up the map, apply the current-rel
 ; command. Runs as fast as practical; timeout-reset keeps the motor
 ; timeout from tripping since we drive the motor from lisp instead of
 ; the ADC/PPM/UART app directly.
+;
+; The independent brake channel (see thr-brake-read in throttle.lisp)
+; bypasses the map entirely when active: it's a direct, proportional
+; -1..0 current-rel from a real brake pedal/lever, not a duty-dependent
+; curve. The map's own throttle-released engine braking still applies
+; whenever the brake channel reads 0 (at rest, or disabled).
 (defun control-loop ()
     (loopwhile t
         (progn
             (setq live-throttle (thr-read))
+            (setq live-brake (thr-brake-read))
             (setq live-duty (get-duty))
             (setq live-erpm (get-rpm))
-            (setq live-cur-rel (map-lookup live-throttle (clamp01 (abs live-duty))))
+            (setq live-cur-rel
+                (if (> live-brake 0.0)
+                    (- live-brake)
+                    (map-lookup live-throttle (clamp01 (abs live-duty)))))
             (set-current-rel live-cur-rel)
             (timeout-reset)
             (sleep 0.01) ; ~100 Hz control loop
@@ -55,7 +66,7 @@
 (defun telemetry-loop ()
     (loopwhile t
         (progn
-            (let ((b (array-create 13)))
+            (let ((b (array-create 15)))
             (progn
                 (bufset-u8 b 0 pkt-live)
                 (bufset-i16 b 1 (fx-enc live-throttle))
@@ -63,6 +74,7 @@
                 (bufset-i32 b 5 (to-i live-erpm))
                 (bufset-i16 b 9 (fx-enc live-cur-rel))
                 (bufset-i16 b 11 (to-i (* (get-current) 100.0)))
+                (bufset-i16 b 13 (fx-enc live-brake))
                 (proto-send b)))
             (sleep 0.05) ; 20 Hz, plenty for a smooth UI dot/needle
         )))
@@ -83,7 +95,7 @@
     (looprange r 0 map-thr-n (send-map-row r)))
 
 (defun send-cfg-echo ()
-    (let ((b (array-create 26)))
+    (let ((b (array-create 27)))
     (progn
         (bufset-u8  b 0  pkt-cfg-echo)
         (bufset-u8  b 1  cfg-preset)
@@ -101,6 +113,7 @@
         (bufset-i16 b 20 (fx-enc thr-cfg-max))
         (bufset-i16 b 22 (fx-enc thr-cfg-deadband))
         (bufset-i16 b 24 (fx-enc thr-cfg-filter))
+        (bufset-u8  b 26 thr-cfg-brake-enable)
         (proto-send b)
     )))
 
@@ -148,6 +161,7 @@
                 (setq thr-cfg-max (fx-dec (bufget-i16 data 5)))
                 (setq thr-cfg-deadband (fx-dec (bufget-i16 data 7)))
                 (setq thr-cfg-filter (fx-dec (bufget-i16 data 9)))
+                (setq thr-cfg-brake-enable (bufget-u8 data 11))
                 (proto-send-status 0)))
 
         ((= cmd pkt-set-test-thr)

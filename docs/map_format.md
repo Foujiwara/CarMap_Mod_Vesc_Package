@@ -88,7 +88,8 @@ for 441 raw floats, so:
   (`pack4`), so the 441 cells fit in `ceil(441/4) = 111` slots.
 - Layout (addresses 0..127): address 0 is a magic/version marker, 1..14
   hold the throttle + configurator parameters, 15..125 hold the packed
-  map (111 slots), 126..127 are reserved for future use. See the header
+  map (111 slots), 126 holds the brake-channel-enable flag, 127 is
+  reserved for future use. See the header
   comment in `storage.lisp` for the exact field order.
 
 `storage-save` writes all of the above then calls `conf-store` once so the
