@@ -34,11 +34,11 @@ lets the QML UI drive the control loop directly over whatever link VESC
 Tool is already connected through (USB or CAN), for bench-testing with no
 ADC/PPM/UART hardware wired up. It bypasses min/max/deadband/invert
 calibration (the UI already sends a clean 0..1 value) but still goes
-through the same low-pass filter as every other source, and is subject to
-a 0.5 s watchdog (`thr-test-timeout` in `throttle.lisp`): if no
-`SET_TEST_THROTTLE` packet arrives for that long (VESC Tool disconnects,
-the tab is closed, etc.), the value falls back to 0 instead of holding
-whatever current-rel was last requested indefinitely.
+through the same low-pass filter as every other source. There is no
+automatic timeout: the Configurator tab has an explicit **STOP** button
+next to the bench slider (mirroring VESC Tool's own Stop button) that
+sends `SET_TEST_THROTTLE 0` immediately - use it before disconnecting or
+switching source, the same way you would with any other bench test.
 
 `SET_CONFIG` with `preset > 0` (1=Street, 2=Race, 3=Wet, 4=Direct Electric)
 tells the VESC to regenerate the *entire* map from

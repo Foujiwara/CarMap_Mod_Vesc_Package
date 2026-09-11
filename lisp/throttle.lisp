@@ -37,14 +37,11 @@
 (define uart-started 0)
 
 ; Bench-test value, set by handle-packet on SET_TEST_THROTTLE. Only used
-; when thr-cfg-source == thr-src-test. thr-test-ts is refreshed on every
-; SET_TEST_THROTTLE packet; if VESC Tool disconnects (or the slider is
-; simply forgotten) mid-test, thr-read-raw falls back to 0 once no packet
-; has arrived for thr-test-timeout seconds, instead of holding whatever
-; current-rel was last requested forever.
+; when thr-cfg-source == thr-src-test. No automatic timeout here - the
+; QML side has an explicit Stop button (like VESC Tool's own bench-test
+; panel) that sends 0 directly; use it before disconnecting or changing
+; source.
 (define thr-test-value 0.0)
-(define thr-test-ts (systime))
-(define thr-test-timeout 0.5)
 
 (defun uart-throttle-init ()
     (if (= uart-started 0)
@@ -71,8 +68,7 @@
         ((= thr-cfg-source thr-src-adc) (get-adc-decoded 0))
         ((= thr-cfg-source thr-src-ppm) (max-f 0.0 (get-ppm)))
         ((= thr-cfg-source thr-src-uart) (uart-throttle-raw))
-        ((= thr-cfg-source thr-src-test)
-            (if (> (secs-since thr-test-ts) thr-test-timeout) 0.0 thr-test-value))
+        ((= thr-cfg-source thr-src-test) thr-test-value)
         (t 0.0) ; unknown source: fail safe to zero throttle
     ))
 
