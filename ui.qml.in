@@ -409,8 +409,19 @@ Item {
                 width: mapTab.width
                 height: mapTab.heatmapH
                     color: "#0e1013"
-                    border.color: "#333"
+                    border.color: "#f0f"
+                    border.width: 2
                     radius: 4
+
+                    Label {
+                        z: 10
+                        anchors.top: parent.top; anchors.right: parent.right
+                        anchors.margins: 2
+                        color: "#0f0"; font.pixelSize: 12
+                        text: "dbg mapTab=" + Math.round(mapTab.width) + "x" + Math.round(mapTab.height) +
+                              " box=" + Math.round(heatmapBox.width) + "x" + Math.round(heatmapBox.height) +
+                              " cw=" + heatmap.cw.toFixed(1)
+                    }
 
                     Canvas {
                         id: heatmap
@@ -994,6 +1005,21 @@ Item {
             // the heatmap react as you drag them - applyPresetValues/
             // regenerateLocalMap/presets are shared globals on mainItem,
             // not duplicated here.
+
+            Rectangle {
+                z: 10
+                anchors.top: parent.top; anchors.right: parent.right
+                width: dbgCfgLabel.implicitWidth + 8; height: dbgCfgLabel.implicitHeight + 4
+                color: "#000"
+                Label {
+                    id: dbgCfgLabel
+                    anchors.centerIn: parent
+                    color: "#0f0"; font.pixelSize: 12
+                    text: "dbg cfgTab=" + Math.round(cfgTab.width) + "x" + Math.round(cfgTab.height) +
+                          " flick=" + Math.round(cfgFlick.width) + "x" + Math.round(cfgFlick.height) +
+                          " colH=" + Math.round(cfgCol.implicitHeight)
+                }
+            }
 
             Flickable {
                 id: cfgFlick
