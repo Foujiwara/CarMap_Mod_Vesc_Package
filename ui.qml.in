@@ -9,6 +9,7 @@ import QtQuick 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
 import QtQuick.Controls.Material 2.2
+import QtQuick.Window 2.2
 
 import Vedder.vesc.vescinterface 1.0
 import Vedder.vesc.commands 1.0
@@ -28,7 +29,7 @@ Item {
     anchors.fill: parent
     // Bumped on every edit - shown in the header as "build N" so a
     // stale/cached install is obvious at a glance instead of ambiguous.
-    property int buildMarker: 24
+    property int buildMarker: 25
     // Desktop and phone hosts need genuinely different sizing rules, not
     // one compromise value - a cap small enough to avoid overflowing a
     // phone screen leaves desktop far too small, and anything generous
@@ -341,8 +342,19 @@ Item {
     Pane {
         // Now that mainItem itself has anchors.fill: parent (see above),
         // this can just anchor to mainItem normally, the same way
-        // Refloat's own top-level content does.
-        anchors.fill: parent
+        // Refloat's own top-level content does - EXCEPT that on a phone,
+        // mainItem's own width has been observed wider than the actual
+        // visible screen (content confirmed cut off on the right edge,
+        // past the true screen boundary, not just past some internal
+        // bound - clip: true alone can't help since it clips to
+        // mainItem's own, already-too-wide, bounds). Cap width to the
+        // real physical screen width via Screen.width as a hard safety
+        // net on mobile; desktop keeps tracking the real container as
+        // before, since that was never the platform with this problem.
+        anchors.top: parent.top
+        anchors.left: parent.left
+        height: parent.height
+        width: mainItem.isMobilePlatform ? Math.min(parent.width, Screen.width) : parent.width
         // Kept as a safety net regardless: switching to a different VESC
         // Tool tab on a phone once left a leftover render of this page's
         // heatmap Canvas visibly floating over the other tab. Costs
@@ -370,6 +382,10 @@ Item {
                 // ambiguous - "still the same" is either a real no-op fix
                 // or a cache; this number tells them apart at a glance.
                 Label { text: "build " + buildMarker; color: "#f80"; font.bold: true }
+                Label {
+                    font.pixelSize: 11; color: "#0f0"
+                    text: "w:" + Math.round(mainItem.width) + "/scr:" + Math.round(Screen.width)
+                }
                 Item { Layout.fillWidth: true }
                 Rectangle {
                     width: 10; height: 10; radius: 5
