@@ -1,0 +1,10 @@
+# Build outputs
+*.vescpkg
+ui.qml
+package_README-gen.md
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+.vscode/
