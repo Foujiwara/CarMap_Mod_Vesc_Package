@@ -29,7 +29,7 @@ Item {
     anchors.fill: parent
     // Bumped on every edit - shown in the header as "build N" so a
     // stale/cached install is obvious at a glance instead of ambiguous.
-    property int buildMarker: 31
+    property int buildMarker: 32
     // Desktop and phone hosts need genuinely different sizing rules, not
     // one compromise value - a cap small enough to avoid overflowing a
     // phone screen leaves desktop far too small, and anything generous
@@ -96,7 +96,7 @@ Item {
     property real thrMax: 0.98
     property real thrDeadband: 0.02
     property real thrFilter: 1.0
-    property int thrBrakeEnable: 0 // independent ADC2 brake channel
+    property int thrBrakeMode: 0 // independent ADC2 brake channel
 
     function initMapData() {
         var a = []
@@ -159,7 +159,7 @@ Item {
         b = b.concat(i16Bytes(fxEnc(thrMax)))
         b = b.concat(i16Bytes(fxEnc(thrDeadband)))
         b = b.concat(i16Bytes(fxEnc(thrFilter)))
-        b.push(thrBrakeEnable & 0xff)
+        b.push(thrBrakeMode & 0xff)
         sendPacket(b)
     }
     function sendSave()  { sendPacket([cmdSave]) }
@@ -215,7 +215,7 @@ Item {
             thrMax = fxDec(view.getInt16(20, false))
             thrDeadband = fxDec(view.getInt16(22, false))
             thrFilter = fxDec(view.getInt16(24, false))
-            thrBrakeEnable = view.getUint8(26)
+            thrBrakeMode = view.getUint8(26)
         }
     }
 
@@ -635,8 +635,8 @@ Item {
                         Label { text: liveCurRel.toFixed(2); color: "#fff" }
                         Label { text: "Motor A"; color: "#aaa" }
                         Label { text: liveCurA.toFixed(1) + " A"; color: "#fff" }
-                        Label { visible: thrBrakeEnable === 1; text: "Brake"; color: "#aaa" }
-                        Label { visible: thrBrakeEnable === 1; text: (liveBrake*100).toFixed(1) + " %"; color: "#fff" }
+                        Label { visible: thrBrakeMode !== 0; text: "Brake"; color: "#aaa" }
+                        Label { visible: thrBrakeMode !== 0; text: (liveBrake*100).toFixed(1) + " %"; color: "#fff" }
                     }
 
                     Rectangle { Layout.fillWidth: true; height: 1; color: "#333" }
@@ -1256,15 +1256,33 @@ Item {
                         }
                         CheckBox { text: "Invert"; checked: thrInvert === 1; onToggled: thrInvert = checked ? 1 : 0 }
                     }
-                    CheckBox {
-                        text: "Separate brake channel (ADC2, 0-100%)"
+                    ColumnLayout {
                         visible: thrSource === 0
-                        checked: thrBrakeEnable === 1
-                        onToggled: { thrBrakeEnable = checked ? 1 : 0; sendSetThrottle() }
+                        Layout.fillWidth: true
+                        spacing: 2
+                        Label { text: "Braking (ADC only)"; color: "#ccc" }
+                        ComboBox {
+                            Layout.fillWidth: true
+                            model: ["Off (map's engine braking only)",
+                                    "Dual channel: brake on ADC2, own 0-100%",
+                                    "Bidirectional: one ADC1, center = neutral"]
+                            currentIndex: thrBrakeMode
+                            onActivated: (idx) => { thrBrakeMode = idx; sendSetThrottle() }
+                        }
                     }
                     Label {
-                        visible: thrSource === 0 && thrBrakeEnable === 1
-                        text: "For a separate accelerator + brake pedal/lever setup (each giving its own 0-100% signal), not a single bidirectional throttle. Brake reads ADC channel 2 and overrides the map with a direct, proportional negative current-rel whenever it's above its deadband."
+                        visible: thrSource === 0 && thrBrakeMode === 1
+                        text: "Dual channel: for a separate accelerator + brake pedal/lever, each giving its own independent 0-100% signal (ADC1 = accel, ADC2 = brake)."
+                        color: "#9bd"; wrapMode: Text.WordWrap; Layout.fillWidth: true; font.pixelSize: 16
+                    }
+                    Label {
+                        visible: thrSource === 0 && thrBrakeMode === 2
+                        text: "Bidirectional: a single ADC1 input, center-zero - above center is accelerator, below is brake. Uses the ADC app's own start/center/end calibration from App Settings -> ADC (conf-get 'adc-v1-start/-center/-end), not this package's own Min/Max below."
+                        color: "#9bd"; wrapMode: Text.WordWrap; Layout.fillWidth: true; font.pixelSize: 16
+                    }
+                    Label {
+                        visible: thrSource === 0 && thrBrakeMode !== 0
+                        text: "Either mode overrides the map with a direct, proportional negative current-rel whenever the brake side is above its deadband."
                         color: "#9bd"; wrapMode: Text.WordWrap; Layout.fillWidth: true; font.pixelSize: 16
                     }
 

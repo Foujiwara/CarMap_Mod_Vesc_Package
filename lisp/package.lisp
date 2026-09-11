@@ -113,7 +113,7 @@
         (bufset-i16 b 20 (fx-enc thr-cfg-max))
         (bufset-i16 b 22 (fx-enc thr-cfg-deadband))
         (bufset-i16 b 24 (fx-enc thr-cfg-filter))
-        (bufset-u8  b 26 thr-cfg-brake-enable)
+        (bufset-u8  b 26 thr-cfg-brake-mode)
         (proto-send b)
     )))
 
@@ -161,7 +161,7 @@
                 (setq thr-cfg-max (fx-dec (bufget-i16 data 5)))
                 (setq thr-cfg-deadband (fx-dec (bufget-i16 data 7)))
                 (setq thr-cfg-filter (fx-dec (bufget-i16 data 9)))
-                (setq thr-cfg-brake-enable (bufget-u8 data 11))
+                (setq thr-cfg-brake-mode (bufget-u8 data 11))
                 (proto-send-status 0)))
 
         ((= cmd pkt-set-test-thr)

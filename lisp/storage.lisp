@@ -19,7 +19,7 @@
 ;   14  regen curve (i32)
 ;   15..125  map cells, 4 int8 (offset +128, i.e. -100..100 -> 0..255-ish) packed per i32
 ;            111 slots * 4 = 444 >= 441 cells
-;   126 brake channel enable (i32, 0/1) - independent ADC2 brake input
+;   126 brake mode (i32, 0=off 1=dual-channel ADC2 2=bidirectional ADC1)
 
 (define eeprom-magic 20260911)
 (define eeprom-map-base 15)
@@ -52,7 +52,7 @@
         (eeprom-store-f 12 cfg-engine-brake)
         (eeprom-store-f 13 cfg-overrun-regen)
         (eeprom-store-i 14 cfg-regen-curve)
-        (eeprom-store-i 126 thr-cfg-brake-enable)
+        (eeprom-store-i 126 thr-cfg-brake-mode)
         (looprange s 0 eeprom-map-slots
             (let ((c0 (+ (* s 4) 0)) (c1 (+ (* s 4) 1))
                   (c2 (+ (* s 4) 2)) (c3 (+ (* s 4) 3)))
@@ -97,7 +97,7 @@
             (define cfg-engine-brake (eeprom-read-f 12))
             (define cfg-overrun-regen (eeprom-read-f 13))
             (define cfg-regen-curve (eeprom-read-i 14))
-            (define thr-cfg-brake-enable (eeprom-read-i 126))
+            (define thr-cfg-brake-mode (eeprom-read-i 126))
             (looprange s 0 eeprom-map-slots
                 (let ((packed (eeprom-read-i (+ eeprom-map-base s))))
                 (progn
@@ -132,7 +132,7 @@
         (define thr-cfg-filter 1.0) ; no filtering by default - see
                                      ; throttle.lisp, filtering felt like
                                      ; input latency on real hardware
-        (define thr-cfg-brake-enable 0)
+        (define thr-cfg-brake-mode 0)
         (gen-thermal-map cfg-torque-resp cfg-speed-coupling cfg-trans-width
                           cfg-trans-shape cfg-high-hold cfg-engine-brake
                           cfg-overrun-regen cfg-regen-curve)
