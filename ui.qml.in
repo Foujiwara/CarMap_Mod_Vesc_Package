@@ -29,7 +29,7 @@ Item {
     anchors.fill: parent
     // Bumped on every edit - shown in the header as "build N" so a
     // stale/cached install is obvious at a glance instead of ambiguous.
-    property int buildMarker: 30
+    property int buildMarker: 31
     // Desktop and phone hosts need genuinely different sizing rules, not
     // one compromise value - a cap small enough to avoid overflowing a
     // phone screen leaves desktop far too small, and anything generous
@@ -75,6 +75,7 @@ Item {
     property real liveErpm: 0
     property real liveCurRel: 0
     property real liveCurA: 0
+    property real liveBrake: 0
     property string statusText: "Not connected"
 
     // ---------------------------------------------------------------
@@ -94,7 +95,8 @@ Item {
     property real thrMin: 0.02
     property real thrMax: 0.98
     property real thrDeadband: 0.02
-    property real thrFilter: 0.15
+    property real thrFilter: 1.0
+    property int thrBrakeEnable: 0 // independent ADC2 brake channel
 
     function initMapData() {
         var a = []
@@ -157,6 +159,7 @@ Item {
         b = b.concat(i16Bytes(fxEnc(thrMax)))
         b = b.concat(i16Bytes(fxEnc(thrDeadband)))
         b = b.concat(i16Bytes(fxEnc(thrFilter)))
+        b.push(thrBrakeEnable & 0xff)
         sendPacket(b)
     }
     function sendSave()  { sendPacket([cmdSave]) }
@@ -185,6 +188,7 @@ Item {
             liveErpm = view.getInt32(5, false)
             liveCurRel = fxDec(view.getInt16(9, false))
             liveCurA = view.getInt16(11, false) / 100.0
+            liveBrake = fxDec(view.getInt16(13, false))
             statusText = "Connected"
         } else if (cmd === rxMapRow) {
             var row = view.getUint8(1)
@@ -211,6 +215,7 @@ Item {
             thrMax = fxDec(view.getInt16(20, false))
             thrDeadband = fxDec(view.getInt16(22, false))
             thrFilter = fxDec(view.getInt16(24, false))
+            thrBrakeEnable = view.getUint8(26)
         }
     }
 
@@ -630,6 +635,8 @@ Item {
                         Label { text: liveCurRel.toFixed(2); color: "#fff" }
                         Label { text: "Motor A"; color: "#aaa" }
                         Label { text: liveCurA.toFixed(1) + " A"; color: "#fff" }
+                        Label { visible: thrBrakeEnable === 1; text: "Brake"; color: "#aaa" }
+                        Label { visible: thrBrakeEnable === 1; text: (liveBrake*100).toFixed(1) + " %"; color: "#fff" }
                     }
 
                     Rectangle { Layout.fillWidth: true; height: 1; color: "#333" }
@@ -1249,6 +1256,17 @@ Item {
                         }
                         CheckBox { text: "Invert"; checked: thrInvert === 1; onToggled: thrInvert = checked ? 1 : 0 }
                     }
+                    CheckBox {
+                        text: "Separate brake channel (ADC2, 0-100%)"
+                        visible: thrSource === 0
+                        checked: thrBrakeEnable === 1
+                        onToggled: { thrBrakeEnable = checked ? 1 : 0; sendSetThrottle() }
+                    }
+                    Label {
+                        visible: thrSource === 0 && thrBrakeEnable === 1
+                        text: "For a separate accelerator + brake pedal/lever setup (each giving its own 0-100% signal), not a single bidirectional throttle. Brake reads ADC channel 2 and overrides the map with a direct, proportional negative current-rel whenever it's above its deadband."
+                        color: "#9bd"; wrapMode: Text.WordWrap; Layout.fillWidth: true; font.pixelSize: 16
+                    }
 
                     // No ADC/PPM/UART hardware wired up yet? Pick "Test
                     // (bench, via USB)" above, then drag this - it drives
@@ -1311,7 +1329,7 @@ Item {
                         ColumnLayout {
                             Layout.fillWidth: true; spacing: 2
                             RowLayout { Layout.fillWidth: true
-                                Label { text: "Filter (low-pass)"; color: "#ccc"; Layout.fillWidth: true; elide: Text.ElideRight }
+                                Label { text: "Filter (1.0 = off)"; color: "#ccc"; Layout.fillWidth: true; elide: Text.ElideRight }
                                 Label { text: thrFilter.toFixed(2); color: "#fff" }
                             }
                             Slider { Layout.fillWidth: true; from: 0; to: 1.0; value: thrFilter; onMoved: thrFilter = value }

@@ -24,9 +24,26 @@
 (define thr-cfg-min      0.02)   ; normalized raw value treated as 0%
 (define thr-cfg-max      0.98)   ; normalized raw value treated as 100%
 (define thr-cfg-deadband 0.02)   ; ignored band around 0 after mapping
-(define thr-cfg-filter   0.15)   ; low-pass alpha, 0 = no filtering, 1 = instant
+(define thr-cfg-filter   1.0)    ; low-pass alpha, 0 = frozen, 1 = no
+                                  ; filtering/instant. Real-hardware
+                                  ; testing found any filtering here felt
+                                  ; like noticeable input latency, so the
+                                  ; default is now "off" (1.0); lower it
+                                  ; from the Configurator tab only if your
+                                  ; particular input is actually noisy.
 
 (define thr-filtered 0.0)
+
+; Independent brake channel (ADC only, for now): a second ADC input
+; (channel 1, i.e. ADC2 on the COMM port) read as its own 0..1 value with
+; the same calibration as the main channel, for setups with a separate
+; accelerator and brake pedal/lever each giving their own 0-100% signal -
+; not a single bidirectional (center-zero) throttle. When active and
+; above its deadband, it overrides the map entirely with a direct,
+; proportional negative current-rel (see control-loop in package.lisp);
+; the thermal map's own throttle-released braking still applies whenever
+; this channel is enabled but at rest.
+(define thr-cfg-brake-enable 0)
 
 ; UART throttle: a tiny 3-byte frame so noise on the line can't be mistaken
 ; for a valid reading. Frame: <0xA5> <percent 0..200, meaning 0..100.0%>
@@ -93,4 +110,20 @@
     (progn
         (setq thr-filtered (+ thr-filtered (* thr-cfg-filter (- n thr-filtered))))
         thr-filtered)
+    ))
+
+; Independent brake channel: ADC2 (channel 1), same min/max/deadband
+; calibration as the main channel (but never inverted - that setting is
+; about the accelerator's own direction, not this separate lever), no
+; filtering (a brake benefits from being immediate, not smoothed).
+; Returns 0.0 when disabled or on any non-ADC source, since a second
+; physical channel only makes sense alongside a real ADC setup.
+(defun thr-brake-read ()
+    (if (and (= thr-cfg-brake-enable 1) (= thr-cfg-source thr-src-adc))
+        (let ((v (/ (- (get-adc-decoded 1) thr-cfg-min) (max-f 0.001 (- thr-cfg-max thr-cfg-min)))))
+        (let ((vc (clamp01 v)))
+        (if (< vc thr-cfg-deadband) 0.0
+            (clamp01 (/ (- vc thr-cfg-deadband) (max-f 0.001 (- 1.0 thr-cfg-deadband)))))
+        ))
+        0.0
     ))
