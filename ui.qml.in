@@ -295,14 +295,121 @@ Item {
             property int hoverT: -1
             property int hoverD: -1
 
-            RowLayout {
+            // Stacked, not side-by-side: this package can render in a
+            // narrow docked panel (a few hundred px), too narrow for a
+            // fixed control column plus a meaningful heatmap side by
+            // side. The heatmap always gets the top, full width, and a
+            // decent minimum height; controls scroll below it.
+            ColumnLayout {
                 anchors.fill: parent
                 spacing: 8
 
-                ColumnLayout {
+                Rectangle {
+                    Layout.fillWidth: true
                     Layout.fillHeight: true
-                    Layout.preferredWidth: 210
-                    spacing: 6
+                    Layout.minimumHeight: 220
+                    color: "#0e1013"
+                    border.color: "#333"
+                    radius: 4
+
+                    Canvas {
+                        id: heatmap
+                        anchors.fill: parent
+                        anchors.margins: 24
+                        property real cw: width / mapN
+                        property real ch: height / mapN
+
+                        onPaint: {
+                            var ctx = getContext("2d")
+                            ctx.clearRect(0, 0, width, height)
+                            try {
+                                for (var t = 0; t < mapN; t++) {
+                                    for (var d = 0; d < mapN; d++) {
+                                        var v = getCell(t, d)
+                                        var col = valueColor(v)
+                                        ctx.fillStyle = Qt.rgba(col.r, col.g, col.b, 1)
+                                        var y = height - (t + 1) * ch
+                                        var x = d * cw
+                                        var selected = isSelected(t, d)
+                                        ctx.fillRect(x, y, cw - 1, ch - 1)
+                                        if (selected) {
+                                            ctx.strokeStyle = "#ffffff"
+                                            ctx.lineWidth = 2
+                                            ctx.strokeRect(x+1, y+1, cw - 3, ch - 3)
+                                        }
+                                        if (cw > 26) {
+                                            ctx.fillStyle = Math.abs(v) > 0.5 ? "#111" : "#eee"
+                                            ctx.font = "10px sans-serif"
+                                            ctx.textAlign = "center"
+                                            ctx.fillText(v.toFixed(2), x + cw/2, y + ch/2 + 3)
+                                        }
+                                    }
+                                }
+                                // live marker
+                                var lx = liveDuty * width
+                                var ly = height - liveThrottle * height
+                                ctx.beginPath()
+                                ctx.arc(lx, ly, 6, 0, 2*Math.PI)
+                                ctx.fillStyle = "#00e5ff"
+                                ctx.fill()
+                                ctx.strokeStyle = "#003"
+                                ctx.stroke()
+                            } catch (e) {
+                                ctx.fillStyle = "#ff5555"
+                                ctx.font = "12px sans-serif"
+                                ctx.textAlign = "left"
+                                ctx.fillText("Draw error: " + e, 8, 20)
+                            }
+                        }
+
+                        Connections { target: mainItem; function onMapDataChanged() { heatmap.requestPaint() } }
+                        Connections { target: mainItem; function onLiveDutyChanged() { heatmap.requestPaint() } }
+                        Connections { target: mainItem; function onLiveThrottleChanged() { heatmap.requestPaint() } }
+                        Connections { target: mainItem; function onSelectionChanged() { heatmap.requestPaint() } }
+                        onWidthChanged: requestPaint()
+                        onHeightChanged: requestPaint()
+                        Component.onCompleted: requestPaint()
+
+                        function cellFromPos(mx, my) {
+                            var d = Math.floor(mx / cw)
+                            var t = Math.floor((height - my) / ch)
+                            d = Math.max(0, Math.min(mapN-1, d))
+                            t = Math.max(0, Math.min(mapN-1, t))
+                            return { t: t, d: d }
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            onPressed: (mouse) => {
+                                var c = heatmap.cellFromPos(mouse.x, mouse.y)
+                                selection = { active: true, t0: c.t, d0: c.d, t1: c.t, d1: c.d }
+                                hoverT = c.t; hoverD = c.d
+                            }
+                            onPositionChanged: (mouse) => {
+                                if (!selection.active) return
+                                var c = heatmap.cellFromPos(mouse.x, mouse.y)
+                                selection = { active: true, t0: selection.t0, d0: selection.d0, t1: c.t, d1: c.d }
+                            }
+                            onClicked: (mouse) => {
+                                var c = heatmap.cellFromPos(mouse.x, mouse.y)
+                                hoverT = c.t; hoverD = c.d
+                            }
+                        }
+                    }
+
+                    // axis labels
+                    Label { text: "0%"; color: "#888"; anchors.left: parent.left; anchors.bottom: parent.bottom; anchors.margins: 4 }
+                    Label { text: "Duty 100%"; color: "#888"; anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: 4 }
+                    Label { text: "Throttle 100%"; color: "#888"; anchors.left: parent.left; anchors.top: parent.top; anchors.margins: 4 }
+                }
+
+                ScrollView {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: Math.min(260, mapTab.height * 0.4)
+                    clip: true
+                    ColumnLayout {
+                        width: mapTab.width - 20
+                        spacing: 6
 
                     Label { text: "Live"; font.bold: true; color: "#ddd" }
                     GridLayout {
@@ -371,94 +478,7 @@ Item {
 
                     Item { Layout.fillHeight: true }
                     Label { text: "Drag on the map to multi-select cells."; wrapMode: Text.WordWrap; color: "#777"; font.pixelSize: 11 }
-                }
-
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    color: "#0e1013"
-                    border.color: "#333"
-                    radius: 4
-
-                    Canvas {
-                        id: heatmap
-                        anchors.fill: parent
-                        anchors.margins: 24
-                        property real cw: width / mapN
-                        property real ch: height / mapN
-
-                        onPaint: {
-                            var ctx = getContext("2d")
-                            ctx.clearRect(0, 0, width, height)
-                            for (var t = 0; t < mapN; t++) {
-                                for (var d = 0; d < mapN; d++) {
-                                    var v = getCell(t, d)
-                                    var col = valueColor(v)
-                                    ctx.fillStyle = Qt.rgba(col.r, col.g, col.b, 1)
-                                    var y = height - (t + 1) * ch
-                                    var x = d * cw
-                                    var selected = isSelected(t, d)
-                                    ctx.fillRect(x, y, cw - 1, ch - 1)
-                                    if (selected) {
-                                        ctx.strokeStyle = "#ffffff"
-                                        ctx.lineWidth = 2
-                                        ctx.strokeRect(x+1, y+1, cw - 3, ch - 3)
-                                    }
-                                    if (cw > 26) {
-                                        ctx.fillStyle = Math.abs(v) > 0.5 ? "#111" : "#eee"
-                                        ctx.font = "10px sans-serif"
-                                        ctx.textAlign = "center"
-                                        ctx.fillText(v.toFixed(2), x + cw/2, y + ch/2 + 3)
-                                    }
-                                }
-                            }
-                            // live marker
-                            var lx = liveDuty * width
-                            var ly = height - liveThrottle * height
-                            ctx.beginPath()
-                            ctx.arc(lx, ly, 6, 0, 2*Math.PI)
-                            ctx.fillStyle = "#00e5ff"
-                            ctx.fill()
-                            ctx.strokeStyle = "#003"
-                            ctx.stroke()
-                        }
-
-                        Connections { target: mainItem; function onMapDataChanged() { heatmap.requestPaint() } }
-                        Connections { target: mainItem; function onLiveDutyChanged() { heatmap.requestPaint() } }
-                        Connections { target: mainItem; function onLiveThrottleChanged() { heatmap.requestPaint() } }
-                        Connections { target: mainItem; function onSelectionChanged() { heatmap.requestPaint() } }
-
-                        function cellFromPos(mx, my) {
-                            var d = Math.floor(mx / cw)
-                            var t = Math.floor((height - my) / ch)
-                            d = Math.max(0, Math.min(mapN-1, d))
-                            t = Math.max(0, Math.min(mapN-1, t))
-                            return { t: t, d: d }
-                        }
-
-                        MouseArea {
-                            anchors.fill: parent
-                            onPressed: (mouse) => {
-                                var c = heatmap.cellFromPos(mouse.x, mouse.y)
-                                selection = { active: true, t0: c.t, d0: c.d, t1: c.t, d1: c.d }
-                                hoverT = c.t; hoverD = c.d
-                            }
-                            onPositionChanged: (mouse) => {
-                                if (!selection.active) return
-                                var c = heatmap.cellFromPos(mouse.x, mouse.y)
-                                selection = { active: true, t0: selection.t0, d0: selection.d0, t1: c.t, d1: c.d }
-                            }
-                            onClicked: (mouse) => {
-                                var c = heatmap.cellFromPos(mouse.x, mouse.y)
-                                hoverT = c.t; hoverD = c.d
-                            }
-                        }
                     }
-
-                    // axis labels
-                    Label { text: "0%"; color: "#888"; anchors.left: parent.left; anchors.bottom: parent.bottom; anchors.margins: 4 }
-                    Label { text: "Duty 100%"; color: "#888"; anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: 4 }
-                    Label { text: "Throttle 100%"; color: "#888"; anchors.left: parent.left; anchors.top: parent.top; anchors.margins: 4 }
                 }
             }
 
@@ -522,13 +542,81 @@ Item {
             property var shownRows: ({0: true, 5: true, 10: true, 15: true, 20: true})
             property int pickedRow: 10
 
-            RowLayout {
+            ColumnLayout {
                 anchors.fill: parent
                 spacing: 8
 
-                ColumnLayout {
-                    Layout.preferredWidth: 200
-                    Layout.fillHeight: true
+                Rectangle {
+                    Layout.fillWidth: true; Layout.fillHeight: true
+                    Layout.minimumHeight: 220
+                    color: "#0e1013"; border.color: "#333"; radius: 4
+                    Canvas {
+                        id: curveCanvas
+                        anchors.fill: parent
+                        anchors.margins: 24
+                        function rowColor(rowIdx) {
+                            var f = rowIdx / (mapN - 1)
+                            return Qt.rgba(0.3 + 0.6*f, 0.8 - 0.5*f, 0.9 - 0.7*f, 1)
+                        }
+                        onPaint: {
+                            var ctx = getContext("2d")
+                            ctx.clearRect(0, 0, width, height)
+                            try {
+                                ctx.strokeStyle = "#444"; ctx.lineWidth = 1
+                                var zeroY = height/2
+                                ctx.beginPath(); ctx.moveTo(0, zeroY); ctx.lineTo(width, zeroY); ctx.stroke()
+                                ctx.strokeStyle = "#333"
+                                ctx.strokeRect(0, 0, width, height)
+
+                                function plotRow(t, color, widthPx) {
+                                    ctx.strokeStyle = color; ctx.lineWidth = widthPx
+                                    ctx.beginPath()
+                                    for (var d = 0; d < mapN; d++) {
+                                        var x = d / (mapN-1) * width
+                                        var v = getCell(t, d)
+                                        var y = height/2 - v * (height/2)
+                                        if (d === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y)
+                                    }
+                                    ctx.stroke()
+                                }
+
+                                for (var t = 0; t < mapN; t++) {
+                                    if (shownRows[t]) plotRow(t, curveCanvas.rowColor(t), 2)
+                                }
+                                plotRow(pickedRow, "#ffffff", 2)
+
+                                if (showLiveCurve.checked) {
+                                    var lx = liveDuty * width
+                                    var ly = height/2 - liveCurRel * (height/2)
+                                    ctx.beginPath(); ctx.arc(lx, ly, 5, 0, 2*Math.PI)
+                                    ctx.fillStyle = "#00e5ff"; ctx.fill()
+                                }
+                            } catch (e) {
+                                ctx.fillStyle = "#ff5555"
+                                ctx.font = "12px sans-serif"
+                                ctx.textAlign = "left"
+                                ctx.fillText("Draw error: " + e, 8, 20)
+                            }
+                        }
+                        Connections { target: mainItem; function onMapDataChanged() { curveCanvas.requestPaint() } }
+                        Connections { target: mainItem; function onLiveDutyChanged() { curveCanvas.requestPaint() } }
+                        Connections { target: curvesTab; function onShownRowsChanged() { curveCanvas.requestPaint() } }
+                        Connections { target: curvesTab; function onPickedRowChanged() { curveCanvas.requestPaint() } }
+                        onWidthChanged: requestPaint()
+                        onHeightChanged: requestPaint()
+                        Component.onCompleted: requestPaint()
+                    }
+                    Label { text: "-1.0"; color: "#777"; anchors.left: parent.left; anchors.bottom: parent.bottom; anchors.margins: 4 }
+                    Label { text: "+1.0"; color: "#777"; anchors.left: parent.left; anchors.top: parent.top; anchors.margins: 4 }
+                    Label { text: "Duty 0% → 100%"; color: "#777"; anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: 4 }
+                }
+
+                ScrollView {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: Math.min(220, curvesTab.height * 0.35)
+                    clip: true
+                    ColumnLayout {
+                    width: curvesTab.width - 20
                     Label { text: "Throttle rows shown"; font.bold: true; color: "#ddd" }
                     Repeater {
                         model: [0, 5, 10, 15, 20]
@@ -548,61 +636,7 @@ Item {
                     Label { text: (pickedRow*5) + " % throttle"; color: "#aaa" }
                     CheckBox { id: showLiveCurve; text: "Show live point"; checked: true }
                     Item { Layout.fillHeight: true }
-                }
-
-                Rectangle {
-                    Layout.fillWidth: true; Layout.fillHeight: true
-                    color: "#0e1013"; border.color: "#333"; radius: 4
-                    Canvas {
-                        id: curveCanvas
-                        anchors.fill: parent
-                        anchors.margins: 24
-                        function rowColor(rowIdx) {
-                            var f = rowIdx / (mapN - 1)
-                            return Qt.rgba(0.3 + 0.6*f, 0.8 - 0.5*f, 0.9 - 0.7*f, 1)
-                        }
-                        onPaint: {
-                            var ctx = getContext("2d")
-                            ctx.clearRect(0, 0, width, height)
-                            // axes
-                            ctx.strokeStyle = "#444"; ctx.lineWidth = 1
-                            var zeroY = height/2
-                            ctx.beginPath(); ctx.moveTo(0, zeroY); ctx.lineTo(width, zeroY); ctx.stroke()
-                            ctx.strokeStyle = "#333"
-                            ctx.strokeRect(0, 0, width, height)
-
-                            function plotRow(t, color, widthPx) {
-                                ctx.strokeStyle = color; ctx.lineWidth = widthPx
-                                ctx.beginPath()
-                                for (var d = 0; d < mapN; d++) {
-                                    var x = d / (mapN-1) * width
-                                    var v = getCell(t, d)
-                                    var y = height/2 - v * (height/2)
-                                    if (d === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y)
-                                }
-                                ctx.stroke()
-                            }
-
-                            for (var t = 0; t < mapN; t++) {
-                                if (shownRows[t]) plotRow(t, curveCanvas.rowColor(t), 2)
-                            }
-                            plotRow(pickedRow, "#ffffff", 2)
-
-                            if (showLiveCurve.checked) {
-                                var lx = liveDuty * width
-                                var ly = height/2 - liveCurRel * (height/2)
-                                ctx.beginPath(); ctx.arc(lx, ly, 5, 0, 2*Math.PI)
-                                ctx.fillStyle = "#00e5ff"; ctx.fill()
-                            }
-                        }
-                        Connections { target: mainItem; function onMapDataChanged() { curveCanvas.requestPaint() } }
-                        Connections { target: mainItem; function onLiveDutyChanged() { curveCanvas.requestPaint() } }
-                        Connections { target: curvesTab; function onShownRowsChanged() { curveCanvas.requestPaint() } }
-                        Connections { target: curvesTab; function onPickedRowChanged() { curveCanvas.requestPaint() } }
                     }
-                    Label { text: "-1.0"; color: "#777"; anchors.left: parent.left; anchors.bottom: parent.bottom; anchors.margins: 4 }
-                    Label { text: "+1.0"; color: "#777"; anchors.left: parent.left; anchors.top: parent.top; anchors.margins: 4 }
-                    Label { text: "Duty 0% → 100%"; color: "#777"; anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: 4 }
                 }
             }
         }
@@ -639,43 +673,53 @@ Item {
                     onPaint: {
                         var ctx = getContext("2d")
                         ctx.clearRect(0, 0, width, height)
-                        // painter's algorithm: back-to-front by (t+d)
-                        for (var s = 0; s <= 2*(mapN-1); s++) {
-                            for (var t = 0; t < mapN; t++) {
-                                var d = s - t
-                                if (d < 0 || d >= mapN) continue
-                                if (t+1 >= mapN || d+1 >= mapN) continue
-                                var v00 = getCell(t, d), v10 = getCell(t+1, d)
-                                var v01 = getCell(t, d+1), v11 = getCell(t+1, d+1)
-                                var p00 = project(t, d, v00)
-                                var p10 = project(t+1, d, v10)
-                                var p01 = project(t, d+1, v01)
-                                var p11 = project(t+1, d+1, v11)
-                                var avg = (v00+v10+v01+v11)/4
-                                var col = valueColor(avg)
-                                ctx.fillStyle = Qt.rgba(col.r, col.g, col.b, 1)
-                                ctx.beginPath()
-                                ctx.moveTo(p00.x, p00.y)
-                                ctx.lineTo(p10.x, p10.y)
-                                ctx.lineTo(p11.x, p11.y)
-                                ctx.lineTo(p01.x, p01.y)
-                                ctx.closePath()
-                                ctx.fill()
-                                ctx.strokeStyle = "rgba(0,0,0,0.25)"
-                                ctx.stroke()
+                        try {
+                            // painter's algorithm: back-to-front by (t+d)
+                            for (var s = 0; s <= 2*(mapN-1); s++) {
+                                for (var t = 0; t < mapN; t++) {
+                                    var d = s - t
+                                    if (d < 0 || d >= mapN) continue
+                                    if (t+1 >= mapN || d+1 >= mapN) continue
+                                    var v00 = getCell(t, d), v10 = getCell(t+1, d)
+                                    var v01 = getCell(t, d+1), v11 = getCell(t+1, d+1)
+                                    var p00 = project(t, d, v00)
+                                    var p10 = project(t+1, d, v10)
+                                    var p01 = project(t, d+1, v01)
+                                    var p11 = project(t+1, d+1, v11)
+                                    var avg = (v00+v10+v01+v11)/4
+                                    var col = valueColor(avg)
+                                    ctx.fillStyle = Qt.rgba(col.r, col.g, col.b, 1)
+                                    ctx.beginPath()
+                                    ctx.moveTo(p00.x, p00.y)
+                                    ctx.lineTo(p10.x, p10.y)
+                                    ctx.lineTo(p11.x, p11.y)
+                                    ctx.lineTo(p01.x, p01.y)
+                                    ctx.closePath()
+                                    ctx.fill()
+                                    ctx.strokeStyle = "rgba(0,0,0,0.25)"
+                                    ctx.stroke()
+                                }
                             }
+                            // live marker
+                            var ti = liveThrottle * (mapN-1)
+                            var di = liveDuty * (mapN-1)
+                            var lp = project(ti, di, liveCurRel)
+                            ctx.beginPath(); ctx.arc(lp.x, lp.y, 5, 0, 2*Math.PI)
+                            ctx.fillStyle = "#00e5ff"; ctx.fill()
+                            ctx.strokeStyle = "#003"; ctx.stroke()
+                        } catch (e) {
+                            ctx.fillStyle = "#ff5555"
+                            ctx.font = "12px sans-serif"
+                            ctx.textAlign = "left"
+                            ctx.fillText("Draw error: " + e, 8, 20)
                         }
-                        // live marker
-                        var ti = liveThrottle * (mapN-1)
-                        var di = liveDuty * (mapN-1)
-                        var lp = project(ti, di, liveCurRel)
-                        ctx.beginPath(); ctx.arc(lp.x, lp.y, 5, 0, 2*Math.PI)
-                        ctx.fillStyle = "#00e5ff"; ctx.fill()
-                        ctx.strokeStyle = "#003"; ctx.stroke()
                     }
                     Connections { target: mainItem; function onMapDataChanged() { isoCanvas.requestPaint() } }
                     Connections { target: mainItem; function onLiveDutyChanged() { isoCanvas.requestPaint() } }
                     Connections { target: mainItem; function onLiveThrottleChanged() { isoCanvas.requestPaint() } }
+                    onWidthChanged: requestPaint()
+                    onHeightChanged: requestPaint()
+                    Component.onCompleted: requestPaint()
                 }
                 Label {
                     text: "Pseudo-3D (isometric Canvas). X = Duty, depth = Throttle, height/color = Current Rel."
