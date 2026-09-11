@@ -19,7 +19,7 @@ Item {
     id: mainItem
     // Bumped on every edit - shown in the header as "build N" so a
     // stale/cached install is obvious at a glance instead of ambiguous.
-    property int buildMarker: 14
+    property int buildMarker: 15
     property string tabTitle: "CarMap"
     property bool isHorizontal: width > height
     property Commands vescCommands: VescIf.commands()
