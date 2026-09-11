@@ -201,6 +201,88 @@ Item {
     }
 
     // ---------------------------------------------------------------
+    // Preset / map-generation logic. Lives here (on mainItem, the file's
+    // root) rather than inside one tab's Component, because each
+    // Component {} block has its own separate id namespace - code and
+    // ids declared inside mapTabComponent aren't visible from
+    // configuratorTabComponent or vice versa. Functions/properties on
+    // mainItem ARE visible from every Component in this file (they're
+    // captured in each Component's lexical/creation scope), so both the
+    // Map tab and the Configurator tab can drive the exact same preset
+    // and map-generation controls from here.
+    property var presets: [
+        { name: "Custom",         id: 0 },
+        { name: "Thermal Street", id: 1 },
+        { name: "Thermal Race",   id: 2 },
+        { name: "Wet",            id: 3 },
+        { name: "Direct Electric",id: 4 }
+    ]
+
+    function applyPresetValues(id) {
+        if (id === 1) { // Thermal Street
+            cfgTorqueResp = 0.85; cfgSpeedCoupling = 1.0; cfgTransWidth = 0.10
+            cfgTransShape = 1; cfgHighHold = 0.55; cfgEngineBrake = 0.15
+            cfgOverrunRegen = 0.12; cfgRegenCurve = 1
+        } else if (id === 2) { // Thermal Race
+            cfgTorqueResp = 1.0; cfgSpeedCoupling = 0.9; cfgTransWidth = 0.06
+            cfgTransShape = 3; cfgHighHold = 0.9; cfgEngineBrake = 0.08
+            cfgOverrunRegen = 0.06; cfgRegenCurve = 2
+        } else if (id === 3) { // Wet
+            cfgTorqueResp = 0.6; cfgSpeedCoupling = 1.1; cfgTransWidth = 0.16
+            cfgTransShape = 1; cfgHighHold = 0.35; cfgEngineBrake = 0.10
+            cfgOverrunRegen = 0.05; cfgRegenCurve = 1
+        } else if (id === 4) { // Direct Electric
+            cfgTorqueResp = 1.0; cfgSpeedCoupling = 0.0; cfgTransWidth = 0.02
+            cfgTransShape = 0; cfgHighHold = 1.0; cfgEngineBrake = 0.02
+            cfgOverrunRegen = 0.0; cfgRegenCurve = 0
+        }
+        cfgPreset = id
+    }
+
+    // Local (QML-side) mirror of gen-thermal-map from map.lisp, used so
+    // the heatmap updates instantly without waiting on a round trip; the
+    // authoritative regeneration still happens on the VESC when
+    // SET_CONFIG is received with preset > 0.
+    function thermalPeak(thr, torqueResp, highHold) {
+        var base = Math.pow(thr, torqueResp)
+        var smooth = Math.max(0, Math.min(1, (thr - 0.6) / 0.4))
+        return base + (thr - base) * highHold * smooth
+    }
+    function shapeCurve(p, shape) {
+        if (shape === 0) return p
+        if (shape === 1) return p*p
+        if (shape === 2) return 1 - Math.pow(1-p, 3)
+        return Math.pow(p, 4)
+    }
+    function regenerateLocalMap() {
+        var arr = mapData.slice()
+        for (var ti = 0; ti < mapN; ti++) {
+            var thr = ti / (mapN - 1)
+            var peak = thermalPeak(thr, cfgTorqueResp, cfgHighHold)
+            var balanceDuty = Math.max(0, Math.min(1, thr * cfgSpeedCoupling))
+            for (var di = 0; di < mapN; di++) {
+                var duty = di / (mapN - 1)
+                var val
+                if (thr < 0.02) {
+                    val = -cfgEngineBrake * Math.pow(duty, 1 + cfgRegenCurve)
+                } else {
+                    var start = Math.max(0, balanceDuty - cfgTransWidth)
+                    if (duty <= start) val = peak
+                    else if (duty <= balanceDuty) {
+                        var p = (duty - start) / Math.max(0.001, balanceDuty - start)
+                        val = peak * (1 - shapeCurve(p, cfgTransShape))
+                    } else {
+                        var over = (duty - balanceDuty) / Math.max(0.001, 1 - balanceDuty)
+                        val = -cfgOverrunRegen * Math.pow(Math.max(0,Math.min(1,over)), 1 + cfgRegenCurve)
+                    }
+                }
+                arr[cellIdx(ti, di)] = Math.max(-1, Math.min(1, val))
+            }
+        }
+        mapData = arr
+    }
+
+    // ---------------------------------------------------------------
     // Color scale: -1..0..+1 -> blue/purple .. gray .. green/yellow/orange/red
     function valueColor(v) {
         v = Math.max(-1, Math.min(1, v))
@@ -271,6 +353,7 @@ Item {
             }
 
             StackLayout {
+                id: stackLayout
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 currentIndex: tabBar.currentIndex
@@ -298,7 +381,14 @@ Item {
         id: mapTabComponent
         Item {
             id: mapTab
-            anchors.fill: parent
+            // Deliberately NOT anchors.fill: parent - in this host, that
+            // resolved to the item's own pre-existing (minimal) size
+            // instead of the real panel size. Binding directly to the
+            // StackLayout's own geometry (proven correct: the TabBar
+            // above it fills the whole panel width) sidesteps whatever
+            // is off about the Loader/parent chain in between.
+            width: stackLayout.width
+            height: stackLayout.height
             property int hoverT: -1
             property int hoverD: -1
 
@@ -412,10 +502,11 @@ Item {
 
                 ScrollView {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: Math.min(260, mapTab.height * 0.4)
+                    Layout.preferredHeight: Math.min(420, mapTab.height * 0.45)
                     clip: true
+                    ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOn }
                     ColumnLayout {
-                        width: mapTab.width - 20
+                        width: mapTab.width - 30
                         spacing: 6
 
                     Label { text: "Live"; font.bold: true; color: "#ddd" }
@@ -431,6 +522,114 @@ Item {
                         Label { text: liveCurRel.toFixed(2); color: "#fff" }
                         Label { text: "Motor A"; color: "#aaa" }
                         Label { text: liveCurA.toFixed(1) + " A"; color: "#fff" }
+                    }
+
+                    Rectangle { Layout.fillWidth: true; height: 1; color: "#333" }
+
+                    // Moved here from the Configurator tab: preset + the 8
+                    // map-shaping sliders, right next to the heatmap so
+                    // dragging them shows their effect immediately.
+                    Label { text: "Preset & map shape"; font.bold: true; color: "#ddd" }
+                    RowLayout {
+                        ComboBox {
+                            id: presetComboMap
+                            Layout.preferredWidth: 220
+                            model: presets.map(function(p){ return p.name })
+                            currentIndex: cfgPreset
+                            onActivated: (idx) => {
+                                applyPresetValues(presets[idx].id)
+                                regenerateLocalMap()
+                                sendSetConfig()
+                            }
+                        }
+                        Button {
+                            text: "Regenerate map"
+                            onClicked: { regenerateLocalMap(); sendSetConfig() }
+                        }
+                    }
+                    GridLayout {
+                        columns: 3
+                        columnSpacing: 10; rowSpacing: 6
+                        Layout.fillWidth: true
+
+                        Label { text: "Torque response"; color: "#ccc" }
+                        Slider { Layout.fillWidth: true; from: 0.3; to: 2.0; value: cfgTorqueResp; onMoved: { cfgTorqueResp = value; cfgPreset = 0; regenerateLocalMap() } }
+                        Label { text: cfgTorqueResp.toFixed(2); color: "#fff" }
+
+                        Label { text: "Speed coupling"; color: "#ccc" }
+                        Slider { Layout.fillWidth: true; from: 0.0; to: 1.5; value: cfgSpeedCoupling; onMoved: { cfgSpeedCoupling = value; cfgPreset = 0; regenerateLocalMap() } }
+                        Label { text: cfgSpeedCoupling.toFixed(2); color: "#fff" }
+
+                        Label { text: "Transition width"; color: "#ccc" }
+                        Slider { Layout.fillWidth: true; from: 0.02; to: 0.30; value: cfgTransWidth; onMoved: { cfgTransWidth = value; cfgPreset = 0; regenerateLocalMap() } }
+                        Label { text: (cfgTransWidth*100).toFixed(0) + " %"; color: "#fff" }
+
+                        Label { text: "Transition shape"; color: "#ccc" }
+                        ComboBox {
+                            Layout.fillWidth: true
+                            model: ["Linear", "Progressive", "Exponential", "Late/abrupt"]
+                            currentIndex: cfgTransShape
+                            onActivated: (idx) => { cfgTransShape = idx; cfgPreset = 0; regenerateLocalMap() }
+                        }
+                        Item {}
+
+                        Label { text: "High throttle hold"; color: "#ccc" }
+                        Slider { Layout.fillWidth: true; from: 0.0; to: 1.0; value: cfgHighHold; onMoved: { cfgHighHold = value; cfgPreset = 0; regenerateLocalMap() } }
+                        Label { text: cfgHighHold.toFixed(2); color: "#fff" }
+
+                        Label { text: "Engine braking"; color: "#ccc" }
+                        Slider { Layout.fillWidth: true; from: 0.0; to: 0.6; value: cfgEngineBrake; onMoved: { cfgEngineBrake = value; cfgPreset = 0; regenerateLocalMap() } }
+                        Label { text: cfgEngineBrake.toFixed(2); color: "#fff" }
+
+                        Label { text: "Overrun regen"; color: "#ccc" }
+                        Slider { Layout.fillWidth: true; from: 0.0; to: 0.5; value: cfgOverrunRegen; onMoved: { cfgOverrunRegen = value; cfgPreset = 0; regenerateLocalMap() } }
+                        Label { text: cfgOverrunRegen.toFixed(2); color: "#fff" }
+
+                        Label { text: "Regen curve"; color: "#ccc" }
+                        ComboBox {
+                            Layout.fillWidth: true
+                            model: ["Linear", "Progressive", "Late"]
+                            currentIndex: cfgRegenCurve
+                            onActivated: (idx) => { cfgRegenCurve = idx; cfgPreset = 0; regenerateLocalMap() }
+                        }
+                        Item {}
+                    }
+                    Button {
+                        text: "Send to VESC (generate authoritative map)"
+                        onClicked: { regenerateLocalMap(); sendSetConfig() }
+                    }
+
+                    Rectangle { Layout.fillWidth: true; height: 1; color: "#333" }
+
+                    // Bench throttle here too (as well as on the
+                    // Configurator tab, where the source itself is
+                    // picked) so you can drag it while watching the live
+                    // dot move across the map you just shaped above.
+                    ColumnLayout {
+                        visible: thrSource === 3
+                        Layout.fillWidth: true
+                        Label { text: "Bench throttle (test source)"; font.bold: true; color: "#ddd" }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Slider {
+                                id: benchThrottleMap
+                                Layout.fillWidth: true
+                                from: 0; to: 1
+                                onMoved: sendTestThrottle(value)
+                                onPressedChanged: if (!pressed) sendTestThrottle(value)
+                            }
+                            Label { text: (benchThrottleMap.value*100).toFixed(0) + " %"; color: "#fff" }
+                            Button {
+                                text: "STOP"
+                                Material.background: "#b23b3b"
+                                onClicked: { benchThrottleMap.value = 0; sendTestThrottle(0) }
+                            }
+                        }
+                    }
+                    Label {
+                        visible: thrSource !== 3
+                        text: "Throttle source is not set to Test - pick it on the Configurator tab to bench-drive the map from here without ADC/PPM/UART hardware."
+                        color: "#777"; wrapMode: Text.WordWrap; Layout.fillWidth: true; font.pixelSize: 16
                     }
 
                     Rectangle { Layout.fillWidth: true; height: 1; color: "#333" }
@@ -545,7 +744,8 @@ Item {
         id: curvesTabComponent
         Item {
             id: curvesTab
-            anchors.fill: parent
+            width: stackLayout.width
+            height: stackLayout.height
             property var shownRows: ({0: true, 5: true, 10: true, 15: true, 20: true})
             property int pickedRow: 10
 
@@ -622,8 +822,9 @@ Item {
                     Layout.fillWidth: true
                     Layout.preferredHeight: Math.min(220, curvesTab.height * 0.35)
                     clip: true
+                    ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOn }
                     ColumnLayout {
-                    width: curvesTab.width - 20
+                    width: curvesTab.width - 30
                     Label { text: "Throttle rows shown"; font.bold: true; color: "#ddd" }
                     Repeater {
                         model: [0, 5, 10, 15, 20]
@@ -656,7 +857,8 @@ Item {
         id: iso3DTabComponent
         Item {
             id: iso3DTab
-            anchors.fill: parent
+            width: stackLayout.width
+            height: stackLayout.height
             Rectangle {
                 anchors.fill: parent
                 color: "#0e1013"; border.color: "#333"; radius: 4
@@ -749,153 +951,29 @@ Item {
         id: configuratorTabComponent
         Item {
             id: cfgTab
+            width: stackLayout.width
+            height: stackLayout.height
 
-            property var presets: [
-                { name: "Custom",         id: 0 },
-                { name: "Thermal Street", id: 1 },
-                { name: "Thermal Race",   id: 2 },
-                { name: "Wet",            id: 3 },
-                { name: "Direct Electric",id: 4 }
-            ]
-
-            function applyPresetValues(id) {
-                if (id === 1) { // Thermal Street
-                    cfgTorqueResp = 0.85; cfgSpeedCoupling = 1.0; cfgTransWidth = 0.10
-                    cfgTransShape = 1; cfgHighHold = 0.55; cfgEngineBrake = 0.15
-                    cfgOverrunRegen = 0.12; cfgRegenCurve = 1
-                } else if (id === 2) { // Thermal Race
-                    cfgTorqueResp = 1.0; cfgSpeedCoupling = 0.9; cfgTransWidth = 0.06
-                    cfgTransShape = 3; cfgHighHold = 0.9; cfgEngineBrake = 0.08
-                    cfgOverrunRegen = 0.06; cfgRegenCurve = 2
-                } else if (id === 3) { // Wet
-                    cfgTorqueResp = 0.6; cfgSpeedCoupling = 1.1; cfgTransWidth = 0.16
-                    cfgTransShape = 1; cfgHighHold = 0.35; cfgEngineBrake = 0.10
-                    cfgOverrunRegen = 0.05; cfgRegenCurve = 1
-                } else if (id === 4) { // Direct Electric
-                    cfgTorqueResp = 1.0; cfgSpeedCoupling = 0.0; cfgTransWidth = 0.02
-                    cfgTransShape = 0; cfgHighHold = 1.0; cfgEngineBrake = 0.02
-                    cfgOverrunRegen = 0.0; cfgRegenCurve = 0
-                }
-                cfgPreset = id
-            }
-
-            // Local (QML-side) mirror of gen-thermal-map from map.lisp, used
-            // so the heatmap updates instantly without waiting on a round
-            // trip; the authoritative regeneration still happens on the
-            // VESC when SET_CONFIG is received with preset > 0.
-            function thermalPeak(thr, torqueResp, highHold) {
-                var base = Math.pow(thr, torqueResp)
-                var smooth = Math.max(0, Math.min(1, (thr - 0.6) / 0.4))
-                return base + (thr - base) * highHold * smooth
-            }
-            function shapeCurve(p, shape) {
-                if (shape === 0) return p
-                if (shape === 1) return p*p
-                if (shape === 2) return 1 - Math.pow(1-p, 3)
-                return Math.pow(p, 4)
-            }
-            function regenerateLocalMap() {
-                var arr = mapData.slice()
-                for (var ti = 0; ti < mapN; ti++) {
-                    var thr = ti / (mapN - 1)
-                    var peak = thermalPeak(thr, cfgTorqueResp, cfgHighHold)
-                    var balanceDuty = Math.max(0, Math.min(1, thr * cfgSpeedCoupling))
-                    for (var di = 0; di < mapN; di++) {
-                        var duty = di / (mapN - 1)
-                        var val
-                        if (thr < 0.02) {
-                            val = -cfgEngineBrake * Math.pow(duty, 1 + cfgRegenCurve)
-                        } else {
-                            var start = Math.max(0, balanceDuty - cfgTransWidth)
-                            if (duty <= start) val = peak
-                            else if (duty <= balanceDuty) {
-                                var p = (duty - start) / Math.max(0.001, balanceDuty - start)
-                                val = peak * (1 - shapeCurve(p, cfgTransShape))
-                            } else {
-                                var over = (duty - balanceDuty) / Math.max(0.001, 1 - balanceDuty)
-                                val = -cfgOverrunRegen * Math.pow(Math.max(0,Math.min(1,over)), 1 + cfgRegenCurve)
-                            }
-                        }
-                        arr[cellIdx(ti, di)] = Math.max(-1, Math.min(1, val))
-                    }
-                }
-                mapData = arr
-            }
+            // Preset selection and the 8 map-shaping sliders now live on
+            // the Map tab itself (see mapTabComponent), so you can watch
+            // the heatmap react as you drag them - applyPresetValues/
+            // regenerateLocalMap/presets are shared globals on mainItem,
+            // not duplicated here.
 
             ScrollView {
                 anchors.fill: parent
                 contentWidth: availableWidth
+                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOn }
                 ColumnLayout {
-                    width: cfgTab.width - 20
+                    width: cfgTab.width - 30
                     spacing: 10
 
-                    Label { text: "Preset"; font.bold: true; color: "#ddd" }
-                    RowLayout {
-                        ComboBox {
-                            id: presetCombo
-                            Layout.preferredWidth: 220
-                            model: cfgTab.presets.map(function(p){ return p.name })
-                            currentIndex: cfgPreset
-                            onActivated: (idx) => {
-                                cfgTab.applyPresetValues(cfgTab.presets[idx].id)
-                                cfgTab.regenerateLocalMap()
-                                sendSetConfig()
-                            }
-                        }
-                        Button {
-                            text: "Regenerate map"
-                            onClicked: { cfgTab.regenerateLocalMap(); sendSetConfig() }
-                        }
-                    }
-
-                    GridLayout {
-                        columns: 3
-                        columnSpacing: 10; rowSpacing: 8
-
-                        Label { text: "Torque response"; color: "#ccc" }
-                        Slider { id: sTorque; from: 0.3; to: 2.0; value: cfgTorqueResp; onMoved: { cfgTorqueResp = value; cfgPreset = 0 } }
-                        Label { text: cfgTorqueResp.toFixed(2); color: "#fff" }
-
-                        Label { text: "Speed coupling"; color: "#ccc" }
-                        Slider { id: sSpeed; from: 0.0; to: 1.5; value: cfgSpeedCoupling; onMoved: { cfgSpeedCoupling = value; cfgPreset = 0 } }
-                        Label { text: cfgSpeedCoupling.toFixed(2); color: "#fff" }
-
-                        Label { text: "Transition width"; color: "#ccc" }
-                        Slider { id: sTrans; from: 0.02; to: 0.30; value: cfgTransWidth; onMoved: { cfgTransWidth = value; cfgPreset = 0 } }
-                        Label { text: (cfgTransWidth*100).toFixed(0) + " %"; color: "#fff" }
-
-                        Label { text: "Transition shape"; color: "#ccc" }
-                        ComboBox {
-                            model: ["Linear", "Progressive", "Exponential", "Late/abrupt"]
-                            currentIndex: cfgTransShape
-                            onActivated: (idx) => { cfgTransShape = idx; cfgPreset = 0 }
-                        }
-                        Item {}
-
-                        Label { text: "High throttle hold"; color: "#ccc" }
-                        Slider { id: sHold; from: 0.0; to: 1.0; value: cfgHighHold; onMoved: { cfgHighHold = value; cfgPreset = 0 } }
-                        Label { text: cfgHighHold.toFixed(2); color: "#fff" }
-
-                        Label { text: "Engine braking"; color: "#ccc" }
-                        Slider { id: sBrake; from: 0.0; to: 0.6; value: cfgEngineBrake; onMoved: { cfgEngineBrake = value; cfgPreset = 0 } }
-                        Label { text: cfgEngineBrake.toFixed(2); color: "#fff" }
-
-                        Label { text: "Overrun regen"; color: "#ccc" }
-                        Slider { id: sOverrun; from: 0.0; to: 0.5; value: cfgOverrunRegen; onMoved: { cfgOverrunRegen = value; cfgPreset = 0 } }
-                        Label { text: cfgOverrunRegen.toFixed(2); color: "#fff" }
-
-                        Label { text: "Regen curve"; color: "#ccc" }
-                        ComboBox {
-                            model: ["Linear", "Progressive", "Late"]
-                            currentIndex: cfgRegenCurve
-                            onActivated: (idx) => { cfgRegenCurve = idx; cfgPreset = 0 }
-                        }
-                        Item {}
-                    }
-
-                    Button {
-                        text: "Apply parameters → generate map"
-                        onClicked: { cfgTab.regenerateLocalMap(); sendSetConfig() }
+                    Label {
+                        text: "Preset and map-shaping sliders (Torque response, Speed coupling, " +
+                              "Transition width/shape, High throttle hold, Engine braking, Overrun " +
+                              "regen, Regen curve) are on the Map tab now, right above the heatmap, " +
+                              "so you can see the map update live as you adjust them."
+                        color: "#9bd"; wrapMode: Text.WordWrap; Layout.fillWidth: true
                     }
 
                     Rectangle { Layout.fillWidth: true; height: 1; color: "#333" }
