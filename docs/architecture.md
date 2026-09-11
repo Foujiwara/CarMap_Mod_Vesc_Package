@@ -97,10 +97,10 @@ over the same USB/CAN link VESC Tool is already connected through
 as VESC Tool's own built-in duty/current bench-test panel (that one
 commands the motor directly over the commands interface and never touches
 this package's control loop at all). It's meant purely for exercising the
-map/control loop end-to-end without hardware; a 0.5 s watchdog
-(`thr-test-ts`/`thr-test-timeout` in `throttle.lisp`) zeros the value if
-no packet arrives for that long, so a dropped connection or a forgotten
-slider can't leave the motor holding a stale current-rel indefinitely.
+map/control loop end-to-end without hardware. There is no automatic
+timeout on it: the Configurator tab has an explicit **STOP** button next
+to the bench slider, the same idea as VESC Tool's own Stop button - use
+it before disconnecting or switching source.
 
 Per the official LispBM docs' own recommendation, the corresponding
 ADC/PPM app's control type should be set to **Off** in App Settings so

@@ -153,7 +153,6 @@
         ((= cmd pkt-set-test-thr)
             (progn
                 (setq thr-test-value (fx-dec (bufget-i16 data 1)))
-                (setq thr-test-ts (systime))
                 (proto-send-status 0)))
 
         ((= cmd pkt-cmd-save) (progn (storage-save) (proto-send-status 1)))

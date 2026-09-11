@@ -875,9 +875,14 @@ Item {
                                 onPressedChanged: if (!pressed) sendTestThrottle(value)
                             }
                             Label { text: (benchThrottle.value*100).toFixed(0) + " %"; color: "#fff" }
+                            Button {
+                                text: "STOP"
+                                Material.background: "#b23b3b"
+                                onClicked: { benchThrottle.value = 0; sendTestThrottle(0) }
+                            }
                         }
                         Label {
-                            text: "Releasing the slider does NOT return it to 0 automatically - drag it back down yourself before disconnecting."
+                            text: "STOP zeroes the bench throttle immediately, same idea as VESC Tool's own Stop button - use it before disconnecting or switching source."
                             color: "#996"; wrapMode: Text.WordWrap; Layout.fillWidth: true; font.pixelSize: 11
                         }
                     }
