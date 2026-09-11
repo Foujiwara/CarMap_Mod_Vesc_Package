@@ -1,5 +1,8 @@
 # Build outputs
 *.vescpkg
+# ...except the built release artifact, tracked deliberately so it can be
+# downloaded straight from the repo without a local VESC Tool build.
+!/carmap_thermal_throttle.vescpkg
 ui.qml
 package_README-gen.md
 
