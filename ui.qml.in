@@ -19,7 +19,7 @@ Item {
     id: mainItem
     // Bumped on every edit - shown in the header as "build N" so a
     // stale/cached install is obvious at a glance instead of ambiguous.
-    property int buildMarker: 22
+    property int buildMarker: 23
     // Desktop and phone hosts need genuinely different sizing rules, not
     // one compromise value - a cap small enough to avoid overflowing a
     // phone screen leaves desktop far too small, and anything generous
@@ -390,7 +390,7 @@ Item {
                 TabButton { text: "Map" }
                 TabButton { text: "Curves" }
                 TabButton { text: "3D" }
-                TabButton { text: "Configurator" }
+                TabButton { text: "Config" }
             }
 
             StackLayout {
