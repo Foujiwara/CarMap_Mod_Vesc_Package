@@ -50,9 +50,17 @@
             (setq live-brake (thr-brake-read))
             (setq live-duty (get-duty))
             (setq live-erpm (get-rpm))
+            ; The direct brake channel was a straight 1:1 lever-position
+            ; -> current-rel mapping (no curve at all), which is what
+            ; made it feel abrupt/violent on real hardware. Reuse the
+            ; same "Regen curve" shaping already applied to the map's
+            ; own overrun/engine-braking (see thermal-cell in map.lisp)
+            ; so the brake lever ramps in progressively instead of
+            ; jumping straight to a proportional current the instant it
+            ; leaves the deadband.
             (setq live-cur-rel
                 (if (> live-brake 0.0)
-                    (- live-brake)
+                    (- (pow live-brake (+ 1.0 cfg-regen-curve)))
                     (map-lookup live-throttle (clamp01 (abs live-duty)))))
             (set-current-rel live-cur-rel)
             (timeout-reset)
