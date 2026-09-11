@@ -19,7 +19,7 @@ Item {
     id: mainItem
     // Bumped on every edit - shown in the header as "build N" so a
     // stale/cached install is obvious at a glance instead of ambiguous.
-    property int buildMarker: 17
+    property int buildMarker: 18
     property string tabTitle: "CarMap"
     property bool isHorizontal: width > height
     property Commands vescCommands: VescIf.commands()
@@ -348,6 +348,7 @@ Item {
             spacing: 6
 
             RowLayout {
+                id: headerRow
                 Layout.fillWidth: true
                 Label { text: "CarMap Thermal Throttle"; font.pixelSize: 30; font.bold: true; color: "#e8e8e8" }
                 // Bump buildMarker on every edit to this file so a stale/
@@ -377,17 +378,22 @@ Item {
                 id: stackLayout
                 Layout.fillWidth: true
                 // NOT Layout.fillHeight - the debug overlays proved this
-                // host never gives our page a real height to fill (every
-                // tab measured height=0 while width was a real number):
-                // it hands us a width and expects OUR content to define
-                // its own height, like a scrollable web page, not the
-                // other way around. A fixed, generous preferredHeight
-                // makes this a real, stable number instead of 0, and
-                // pushes mainItem/Pane to size themselves around it.
-                Layout.preferredHeight: 900
-                height: 900 // belt-and-braces: force it directly too, in
-                            // case this ColumnLayout doesn't honor the
-                            // Layout.preferredHeight hint for some reason
+                // host never gives our page a real height to fill on
+                // desktop (every tab measured height=0 while width was a
+                // real number). A fixed 900px "fixed it" on desktop but
+                // then badly overflowed onto the next swipeable page on
+                // mobile, where the real screen is much shorter - so the
+                // fixed number was wrong too, just wrong in the other
+                // direction. Compute it instead from mainItem.parent's
+                // real (reactive) height minus what the header+tab bar
+                // actually take up, with 900 only as a last-resort
+                // fallback if parent isn't available yet.
+                property real wantedHeight: mainItem.parent
+                    ? Math.max(280, mainItem.parent.height - headerRow.height - tabBar.height - 32)
+                    : 900
+                Layout.preferredHeight: wantedHeight
+                height: wantedHeight // belt-and-braces, see the comment
+                                     // on the Pane's width/height binding
                 currentIndex: tabBar.currentIndex
 
                 // Everything below is defined inline (not as separate QML
