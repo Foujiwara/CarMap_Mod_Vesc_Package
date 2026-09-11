@@ -17,9 +17,18 @@ import Vedder.vesc.utility 1.0
 
 Item {
     id: mainItem
+    // Refloat's mainItem does this too (confirmed by reading its actual
+    // source, vedderb/vesc_pkg/refloat/ui.qml.in) - it's the standard,
+    // correct way to have this root Item track its host container's
+    // real, live size. An earlier version of this file was missing it
+    // entirely and instead reached for mainItem.parent from deep inside
+    // child components as a workaround, which is what actually needed
+    // all the platform-specific size branching below - most of that
+    // complexity should no longer be necessary with this in place.
+    anchors.fill: parent
     // Bumped on every edit - shown in the header as "build N" so a
     // stale/cached install is obvious at a glance instead of ambiguous.
-    property int buildMarker: 23
+    property int buildMarker: 24
     // Desktop and phone hosts need genuinely different sizing rules, not
     // one compromise value - a cap small enough to avoid overflowing a
     // phone screen leaves desktop far too small, and anything generous
@@ -330,28 +339,14 @@ Item {
     // property at all, and assigning font.* to one is a QML load error
     // (this is why an earlier build failed to load entirely).
     Pane {
-        // NOT anchors.fill: parent (parent = mainItem). Confirmed on
-        // real hardware: mainItem's own width/height are handed to it
-        // ONCE by the VESC Tool host when the page is created and never
-        // updated again (the page stayed pinned at a fixed size in the
-        // window's top-left corner even after maximizing the window) -
-        // so anchoring to mainItem just inherits that frozen size.
-        // mainItem.parent is the host's own native container, which
-        // (being a normal part of the app's UI) should actually track
-        // the real, current window/panel size - bind directly to that
-        // instead, with mainItem's own size only as a last-resort
-        // fallback in case parent isn't available yet.
-        x: 0; y: 0
-        width: mainItem.parent ? mainItem.parent.width : mainItem.width
-        height: mainItem.parent ? mainItem.parent.height : mainItem.height
-        // Hard clip everything to these bounds. Confirmed on a phone:
-        // switching to a different VESC Tool tab (RT Data) left a
-        // leftover render of this page's heatmap Canvas visibly
-        // floating over it - a real visual overflow, not just a wrong
-        // height number. No amount of correctly-computed height fixes
-        // that on its own; clipping guarantees nothing we draw can ever
-        // paint outside our own bounds, no matter what causes an
-        // internal size to be miscalculated on some host.
+        // Now that mainItem itself has anchors.fill: parent (see above),
+        // this can just anchor to mainItem normally, the same way
+        // Refloat's own top-level content does.
+        anchors.fill: parent
+        // Kept as a safety net regardless: switching to a different VESC
+        // Tool tab on a phone once left a leftover render of this page's
+        // heatmap Canvas visibly floating over the other tab. Costs
+        // nothing when sizes are already correct.
         clip: true
         padding: 0
         // Smaller on mobile: at 22px, the 4 TabButtons (Map/Curves/3D/
@@ -396,38 +391,7 @@ Item {
             StackLayout {
                 id: stackLayout
                 Layout.fillWidth: true
-                // NOT Layout.fillHeight - the debug overlays proved this
-                // host never gives our page a real height to fill on
-                // desktop (every tab measured height=0 while width was a
-                // real number), so desktop needs a large, generous size
-                // to look right. A single cap small enough to never
-                // overflow a phone screen left desktop far too small -
-                // desktop and mobile need genuinely different numbers,
-                // not one compromise (see isMobilePlatform above).
-                // The 420px hard mobile cap tried here previously ended
-                // up clipping away real content (the Configurator tab
-                // button, part of the graph) once clip: true started
-                // actually being honored on the Pane above. Now that
-                // clip guarantees nothing can bleed outside our own
-                // bounds regardless of size, there's no need for mobile
-                // to be nearly as conservative - use the same generous
-                // computation as desktop everywhere, just with a lower
-                // floor and ceiling on mobile to suit a phone screen.
-                property real wantedHeight: mainItem.parent
-                    ? Math.max(mainItem.isMobilePlatform ? 320 : 400,
-                               Math.min(mainItem.isMobilePlatform ? 900 : 1400,
-                                        mainItem.parent.height - headerRow.height - tabBar.height - 32))
-                    : (mainItem.isMobilePlatform ? 600 : 900)
-                Layout.preferredHeight: wantedHeight
-                Layout.maximumHeight: mainItem.isMobilePlatform ? 900 : 1400
-                // NOT also a bare `height: wantedHeight` here - a Layout
-                // arranges its own managed children's geometry each
-                // pass, and a plain `height` set directly on one of them
-                // fights that instead of cooperating with it. Mixing the
-                // two was the likely cause of a large empty gap seen
-                // above the heatmap on a phone: the Layout's arrangement
-                // and this property's own value could disagree about
-                // where content actually starts.
+                Layout.fillHeight: true
                 currentIndex: tabBar.currentIndex
 
                 // Everything below is defined inline (not as separate QML
