@@ -355,7 +355,15 @@ Item {
             StackLayout {
                 id: stackLayout
                 Layout.fillWidth: true
-                Layout.fillHeight: true
+                // NOT Layout.fillHeight - the debug overlays proved this
+                // host never gives our page a real height to fill (every
+                // tab measured height=0 while width was a real number):
+                // it hands us a width and expects OUR content to define
+                // its own height, like a scrollable web page, not the
+                // other way around. A fixed, generous preferredHeight
+                // makes this a real, stable number instead of 0, and
+                // pushes mainItem/Pane to size themselves around it.
+                Layout.preferredHeight: 900
                 currentIndex: tabBar.currentIndex
 
                 // Everything below is defined inline (not as separate QML
