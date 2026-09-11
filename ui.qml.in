@@ -153,7 +153,7 @@ Item {
     // Receive path
     Connections {
         target: vescCommands
-        onCustomAppDataReceived: (data) => handleRx(data)
+        function onCustomAppDataReceived(data) { handleRx(data) }
     }
 
     function handleRx(data) {
@@ -392,19 +392,22 @@ Item {
             property int hoverT: -1
             property int hoverD: -1
 
-            // Stacked, not side-by-side: this package can render in a
-            // narrow docked panel (a few hundred px), too narrow for a
-            // fixed control column plus a meaningful heatmap side by
-            // side. The heatmap always gets the top, full width, and a
-            // decent minimum height; controls scroll below it.
-            ColumnLayout {
-                anchors.fill: parent
-                spacing: 8
+            // Explicit x/y/width/height instead of ColumnLayout/anchors:
+            // this host has repeatedly shown surprising results with
+            // Layout-negotiated sizing (see git history), including the
+            // heatmap growing out of frame once real telemetry started
+            // updating it. Two fixed zones, computed directly from
+            // mapTab's own (now known-good) size, removes any chance of
+            // a Layout feedback loop.
+            property real heatmapH: Math.max(280, Math.round(mapTab.height * 0.55))
+            property real controlsY: heatmapH + 8
+            property real controlsH: Math.max(160, mapTab.height - controlsY - 4)
 
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    Layout.minimumHeight: 360
+            Rectangle {
+                id: heatmapBox
+                x: 0; y: 0
+                width: mapTab.width
+                height: mapTab.heatmapH
                     color: "#0e1013"
                     border.color: "#333"
                     radius: 4
@@ -500,13 +503,22 @@ Item {
                     Label { text: "Throttle 100%"; color: "#888"; anchors.left: parent.left; anchors.top: parent.top; anchors.margins: 4 }
                 }
 
-                ScrollView {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: Math.min(420, mapTab.height * 0.45)
+                Flickable {
+                    id: mapControlsFlick
+                    x: 0; y: mapTab.controlsY
+                    width: mapTab.width
+                    height: mapTab.controlsH
                     clip: true
-                    ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOn }
+                    contentWidth: width
+                    contentHeight: mapControlsCol.implicitHeight + 16
+                    boundsBehavior: Flickable.StopAtBounds
+                    ScrollBar.vertical: ScrollBar {
+                        policy: ScrollBar.AlwaysOn
+                        width: 14
+                    }
                     ColumnLayout {
-                        width: mapTab.width - 30
+                        id: mapControlsCol
+                        width: mapControlsFlick.width - 20
                         spacing: 6
 
                     Label { text: "Live"; font.bold: true; color: "#ddd" }
@@ -682,11 +694,9 @@ Item {
                         Button { text: "Interp. selection"; enabled: selection.active; onClicked: interpolateSelection() }
                     }
 
-                    Item { Layout.fillHeight: true }
                     Label { text: "Drag on the map to multi-select cells."; wrapMode: Text.WordWrap; color: "#777"; font.pixelSize: 16 }
                     }
                 }
-            }
 
             function isSelected(t, d) {
                 if (!selection.active) return false
@@ -749,14 +759,18 @@ Item {
             property var shownRows: ({0: true, 5: true, 10: true, 15: true, 20: true})
             property int pickedRow: 10
 
-            ColumnLayout {
-                anchors.fill: parent
-                spacing: 8
+            // Explicit positioning, same reasoning as mapTabComponent -
+            // see the comment there.
+            property real curveH: Math.max(280, Math.round(curvesTab.height * 0.55))
+            property real controlsY: curveH + 8
+            property real controlsH: Math.max(140, curvesTab.height - controlsY - 4)
 
-                Rectangle {
-                    Layout.fillWidth: true; Layout.fillHeight: true
-                    Layout.minimumHeight: 360
-                    color: "#0e1013"; border.color: "#333"; radius: 4
+            Rectangle {
+                id: curveBox
+                x: 0; y: 0
+                width: curvesTab.width
+                height: curvesTab.curveH
+                color: "#0e1013"; border.color: "#333"; radius: 4
                     Canvas {
                         id: curveCanvas
                         anchors.fill: parent
@@ -818,13 +832,19 @@ Item {
                     Label { text: "Duty 0% → 100%"; color: "#777"; anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: 4 }
                 }
 
-                ScrollView {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: Math.min(220, curvesTab.height * 0.35)
+                Flickable {
+                    id: curvesControlsFlick
+                    x: 0; y: curvesTab.controlsY
+                    width: curvesTab.width
+                    height: curvesTab.controlsH
                     clip: true
-                    ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOn }
+                    contentWidth: width
+                    contentHeight: curvesControlsCol.implicitHeight + 16
+                    boundsBehavior: Flickable.StopAtBounds
+                    ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOn; width: 14 }
                     ColumnLayout {
-                    width: curvesTab.width - 30
+                    id: curvesControlsCol
+                    width: curvesControlsFlick.width - 20
                     Label { text: "Throttle rows shown"; font.bold: true; color: "#ddd" }
                     Repeater {
                         model: [0, 5, 10, 15, 20]
@@ -843,10 +863,8 @@ Item {
                     Slider { Layout.fillWidth: true; from: 0; to: mapN-1; stepSize: 1; value: pickedRow; onMoved: pickedRow = value }
                     Label { text: (pickedRow*5) + " % throttle"; color: "#aaa" }
                     CheckBox { id: showLiveCurve; text: "Show live point"; checked: true }
-                    Item { Layout.fillHeight: true }
                     }
                 }
-            }
         }
     }
 
@@ -886,6 +904,23 @@ Item {
                     onPaint: {
                         var ctx = getContext("2d")
                         ctx.clearRect(0, 0, width, height)
+                        // Debug: outline the canvas' own bounds in magenta
+                        // so we can tell a 0x0/invisible canvas apart from
+                        // a canvas that has real bounds but an empty
+                        // isometric drawing inside it.
+                        ctx.strokeStyle = "#ff00ff"
+                        ctx.lineWidth = 3
+                        ctx.strokeRect(1, 1, width - 2, height - 2)
+                        // Debug readout: if this canvas is still blank on
+                        // screen, this line tells us whether it's a 0x0
+                        // sizing problem or something else - remove once
+                        // the tab is confirmed working.
+                        ctx.fillStyle = "#0f0"
+                        ctx.font = "13px sans-serif"
+                        ctx.textAlign = "left"
+                        ctx.fillText("debug: canvas " + Math.round(width) + "x" + Math.round(height) +
+                                     " tileW=" + tileW.toFixed(1) + " tileH=" + tileH.toFixed(1) +
+                                     " zScale=" + zScale.toFixed(1), 8, height - 8)
                         try {
                             // painter's algorithm: back-to-front by (t+d)
                             for (var s = 0; s <= 2*(mapN-1); s++) {
@@ -960,12 +995,17 @@ Item {
             // regenerateLocalMap/presets are shared globals on mainItem,
             // not duplicated here.
 
-            ScrollView {
+            Flickable {
+                id: cfgFlick
                 anchors.fill: parent
-                contentWidth: availableWidth
-                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOn }
+                clip: true
+                contentWidth: width
+                contentHeight: cfgCol.implicitHeight + 16
+                boundsBehavior: Flickable.StopAtBounds
+                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOn; width: 14 }
                 ColumnLayout {
-                    width: cfgTab.width - 30
+                    id: cfgCol
+                    width: cfgFlick.width - 20
                     spacing: 10
 
                     Label {
