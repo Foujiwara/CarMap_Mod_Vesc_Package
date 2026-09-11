@@ -19,7 +19,7 @@ Item {
     id: mainItem
     // Bumped on every edit - shown in the header as "build N" so a
     // stale/cached install is obvious at a glance instead of ambiguous.
-    property int buildMarker: 21
+    property int buildMarker: 22
     // Desktop and phone hosts need genuinely different sizing rules, not
     // one compromise value - a cap small enough to avoid overflowing a
     // phone screen leaves desktop far too small, and anything generous
@@ -354,7 +354,11 @@ Item {
         // internal size to be miscalculated on some host.
         clip: true
         padding: 0
-        font.pixelSize: 22 // bump this if the UI still isn't big enough
+        // Smaller on mobile: at 22px, the 4 TabButtons (Map/Curves/3D/
+        // Configurator) don't fit a phone-width TabBar, pushing
+        // Configurator out of reach entirely once content is clipped to
+        // our own bounds (see the Pane's clip: true below).
+        font.pixelSize: mainItem.isMobilePlatform ? 15 : 22
         background: Rectangle { color: "#15181d" }
 
         ColumnLayout {
@@ -400,26 +404,22 @@ Item {
                 // overflow a phone screen left desktop far too small -
                 // desktop and mobile need genuinely different numbers,
                 // not one compromise (see isMobilePlatform above).
-                property real wantedHeight: {
-                    if (mainItem.isMobilePlatform) {
-                        // Phones: stay conservative and hard-capped low -
-                        // mainItem.parent.height has proven unreliable
-                        // for this on at least one mobile host, so don't
-                        // fully trust it even as the basis of a computed
-                        // value; clamp hard regardless of what it reports.
-                        return mainItem.parent
-                            ? Math.max(240, Math.min(420, mainItem.parent.height - headerRow.height - tabBar.height - 24))
-                            : 380
-                    }
-                    // Desktop: generous, computed from the real (proven
-                    // reactive here) parent size, with a high ceiling
-                    // that's really just a sanity bound, not a real cap.
-                    return mainItem.parent
-                        ? Math.max(400, Math.min(1400, mainItem.parent.height - headerRow.height - tabBar.height - 32))
-                        : 900
-                }
+                // The 420px hard mobile cap tried here previously ended
+                // up clipping away real content (the Configurator tab
+                // button, part of the graph) once clip: true started
+                // actually being honored on the Pane above. Now that
+                // clip guarantees nothing can bleed outside our own
+                // bounds regardless of size, there's no need for mobile
+                // to be nearly as conservative - use the same generous
+                // computation as desktop everywhere, just with a lower
+                // floor and ceiling on mobile to suit a phone screen.
+                property real wantedHeight: mainItem.parent
+                    ? Math.max(mainItem.isMobilePlatform ? 320 : 400,
+                               Math.min(mainItem.isMobilePlatform ? 900 : 1400,
+                                        mainItem.parent.height - headerRow.height - tabBar.height - 32))
+                    : (mainItem.isMobilePlatform ? 600 : 900)
                 Layout.preferredHeight: wantedHeight
-                Layout.maximumHeight: mainItem.isMobilePlatform ? 420 : 1400
+                Layout.maximumHeight: mainItem.isMobilePlatform ? 900 : 1400
                 // NOT also a bare `height: wantedHeight` here - a Layout
                 // arranges its own managed children's geometry each
                 // pass, and a plain `height` set directly on one of them
