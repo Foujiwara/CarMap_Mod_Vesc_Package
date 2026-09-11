@@ -29,7 +29,7 @@ Item {
     anchors.fill: parent
     // Bumped on every edit - shown in the header as "build N" so a
     // stale/cached install is obvious at a glance instead of ambiguous.
-    property int buildMarker: 27
+    property int buildMarker: 28
     // Desktop and phone hosts need genuinely different sizing rules, not
     // one compromise value - a cap small enough to avoid overflowing a
     // phone screen leaves desktop far too small, and anything generous
@@ -646,7 +646,7 @@ Item {
                         ColumnLayout {
                             Layout.fillWidth: true; spacing: 2
                             RowLayout { Layout.fillWidth: true
-                                Label { text: "Torque response"; color: "#ccc"; Layout.fillWidth: true }
+                                Label { text: "Torque response"; color: "#ccc"; Layout.fillWidth: true; elide: Text.ElideRight }
                                 Label { text: cfgTorqueResp.toFixed(2); color: "#fff" }
                             }
                             Slider { Layout.fillWidth: true; from: 0.3; to: 2.0; value: cfgTorqueResp; onMoved: { cfgTorqueResp = value; cfgPreset = 0; regenerateLocalMap() } }
@@ -654,7 +654,7 @@ Item {
                         ColumnLayout {
                             Layout.fillWidth: true; spacing: 2
                             RowLayout { Layout.fillWidth: true
-                                Label { text: "Speed coupling"; color: "#ccc"; Layout.fillWidth: true }
+                                Label { text: "Speed coupling"; color: "#ccc"; Layout.fillWidth: true; elide: Text.ElideRight }
                                 Label { text: cfgSpeedCoupling.toFixed(2); color: "#fff" }
                             }
                             Slider { Layout.fillWidth: true; from: 0.0; to: 1.5; value: cfgSpeedCoupling; onMoved: { cfgSpeedCoupling = value; cfgPreset = 0; regenerateLocalMap() } }
@@ -662,7 +662,7 @@ Item {
                         ColumnLayout {
                             Layout.fillWidth: true; spacing: 2
                             RowLayout { Layout.fillWidth: true
-                                Label { text: "Transition width"; color: "#ccc"; Layout.fillWidth: true }
+                                Label { text: "Transition width"; color: "#ccc"; Layout.fillWidth: true; elide: Text.ElideRight }
                                 Label { text: (cfgTransWidth*100).toFixed(0) + " %"; color: "#fff" }
                             }
                             Slider { Layout.fillWidth: true; from: 0.02; to: 0.30; value: cfgTransWidth; onMoved: { cfgTransWidth = value; cfgPreset = 0; regenerateLocalMap() } }
@@ -680,7 +680,7 @@ Item {
                         ColumnLayout {
                             Layout.fillWidth: true; spacing: 2
                             RowLayout { Layout.fillWidth: true
-                                Label { text: "High throttle hold"; color: "#ccc"; Layout.fillWidth: true }
+                                Label { text: "High throttle hold"; color: "#ccc"; Layout.fillWidth: true; elide: Text.ElideRight }
                                 Label { text: cfgHighHold.toFixed(2); color: "#fff" }
                             }
                             Slider { Layout.fillWidth: true; from: 0.0; to: 1.0; value: cfgHighHold; onMoved: { cfgHighHold = value; cfgPreset = 0; regenerateLocalMap() } }
@@ -688,7 +688,7 @@ Item {
                         ColumnLayout {
                             Layout.fillWidth: true; spacing: 2
                             RowLayout { Layout.fillWidth: true
-                                Label { text: "Engine braking"; color: "#ccc"; Layout.fillWidth: true }
+                                Label { text: "Engine braking"; color: "#ccc"; Layout.fillWidth: true; elide: Text.ElideRight }
                                 Label { text: cfgEngineBrake.toFixed(2); color: "#fff" }
                             }
                             Slider { Layout.fillWidth: true; from: 0.0; to: 0.6; value: cfgEngineBrake; onMoved: { cfgEngineBrake = value; cfgPreset = 0; regenerateLocalMap() } }
@@ -696,7 +696,7 @@ Item {
                         ColumnLayout {
                             Layout.fillWidth: true; spacing: 2
                             RowLayout { Layout.fillWidth: true
-                                Label { text: "Overrun regen"; color: "#ccc"; Layout.fillWidth: true }
+                                Label { text: "Overrun regen"; color: "#ccc"; Layout.fillWidth: true; elide: Text.ElideRight }
                                 Label { text: cfgOverrunRegen.toFixed(2); color: "#fff" }
                             }
                             Slider { Layout.fillWidth: true; from: 0.0; to: 0.5; value: cfgOverrunRegen; onMoved: { cfgOverrunRegen = value; cfgPreset = 0; regenerateLocalMap() } }
@@ -1120,27 +1120,36 @@ Item {
                 }
             }
 
-            RowLayout {
+            ColumnLayout {
                 x: 0; y: iso3DTab.canvasH + 8
                 width: iso3DTab.width
                 height: iso3DTab.controlsH
-                spacing: 16
-                Label { text: "Rotation"; color: "#ccc" }
-                Slider {
-                    Layout.preferredWidth: 200
-                    from: 0; to: 360
-                    value: iso3DTab.rotDeg
-                    onMoved: iso3DTab.rotDeg = value
+                spacing: 4
+                // Stacked, not side by side - two Layout.preferredWidth:
+                // 200 sliders in one RowLayout need ~500px+ combined and
+                // never shrink below that, which is exactly the class of
+                // bug found on the Map/Configurator tabs. A full-width
+                // slider on its own row has no such minimum.
+                RowLayout { Layout.fillWidth: true
+                    Label { text: "Rotation"; color: "#ccc" }
+                    Slider {
+                        Layout.fillWidth: true
+                        from: 0; to: 360
+                        value: iso3DTab.rotDeg
+                        onMoved: iso3DTab.rotDeg = value
+                    }
+                    Label { text: Math.round(iso3DTab.rotDeg) + "°"; color: "#fff" }
                 }
-                Label { text: Math.round(iso3DTab.rotDeg) + "°"; color: "#fff" }
-                Label { text: "Tilt"; color: "#ccc" }
-                Slider {
-                    Layout.preferredWidth: 200
-                    from: 0.15; to: 1.3
-                    value: iso3DTab.tiltFactor
-                    onMoved: iso3DTab.tiltFactor = value
+                RowLayout { Layout.fillWidth: true
+                    Label { text: "Tilt"; color: "#ccc" }
+                    Slider {
+                        Layout.fillWidth: true
+                        from: 0.15; to: 1.3
+                        value: iso3DTab.tiltFactor
+                        onMoved: iso3DTab.tiltFactor = value
+                    }
+                    Label { text: iso3DTab.tiltFactor.toFixed(2); color: "#fff" }
                 }
-                Label { text: iso3DTab.tiltFactor.toFixed(2); color: "#fff" }
             }
         }
     }
@@ -1233,7 +1242,7 @@ Item {
                         ColumnLayout {
                             Layout.fillWidth: true; spacing: 2
                             RowLayout { Layout.fillWidth: true
-                                Label { text: "Min (raw 0..1)"; color: "#ccc"; Layout.fillWidth: true }
+                                Label { text: "Min (raw 0..1)"; color: "#ccc"; Layout.fillWidth: true; elide: Text.ElideRight }
                                 Label { text: thrMin.toFixed(2); color: "#fff" }
                             }
                             Slider { Layout.fillWidth: true; from: 0; to: 0.5; value: thrMin; onMoved: thrMin = value }
@@ -1241,7 +1250,7 @@ Item {
                         ColumnLayout {
                             Layout.fillWidth: true; spacing: 2
                             RowLayout { Layout.fillWidth: true
-                                Label { text: "Max (raw 0..1)"; color: "#ccc"; Layout.fillWidth: true }
+                                Label { text: "Max (raw 0..1)"; color: "#ccc"; Layout.fillWidth: true; elide: Text.ElideRight }
                                 Label { text: thrMax.toFixed(2); color: "#fff" }
                             }
                             Slider { Layout.fillWidth: true; from: 0.5; to: 1.0; value: thrMax; onMoved: thrMax = value }
@@ -1249,7 +1258,7 @@ Item {
                         ColumnLayout {
                             Layout.fillWidth: true; spacing: 2
                             RowLayout { Layout.fillWidth: true
-                                Label { text: "Deadband"; color: "#ccc"; Layout.fillWidth: true }
+                                Label { text: "Deadband"; color: "#ccc"; Layout.fillWidth: true; elide: Text.ElideRight }
                                 Label { text: thrDeadband.toFixed(2); color: "#fff" }
                             }
                             Slider { Layout.fillWidth: true; from: 0; to: 0.15; value: thrDeadband; onMoved: thrDeadband = value }
@@ -1257,7 +1266,7 @@ Item {
                         ColumnLayout {
                             Layout.fillWidth: true; spacing: 2
                             RowLayout { Layout.fillWidth: true
-                                Label { text: "Filter (low-pass)"; color: "#ccc"; Layout.fillWidth: true }
+                                Label { text: "Filter (low-pass)"; color: "#ccc"; Layout.fillWidth: true; elide: Text.ElideRight }
                                 Label { text: thrFilter.toFixed(2); color: "#fff" }
                             }
                             Slider { Layout.fillWidth: true; from: 0; to: 1.0; value: thrFilter; onMoved: thrFilter = value }
