@@ -23,6 +23,10 @@
 ;   0x07 CMD_RESET     [0x07]
 ;   0x08 REQUEST_MAP   [0x08]   -> triggers 0x81 dump, one packet per row
 ;   0x09 REQUEST_CFG   [0x09]   -> triggers 0x83 config echo
+;   0x0A SET_TEST_THROTTLE [0x0A value:i16(x1000)]  -> only applied while
+;        throttle source == Test (bench), see docs/architecture.md. Lets
+;        the QML UI drive the control loop directly over USB/CAN with no
+;        ADC/PPM/UART hardware wired up, for bench testing.
 ;
 ; Lisp -> QML
 ;   0x80 LIVE     [0x80 throttle:i16 duty:i16 erpm:i32 cur_rel:i16 cur_a:i16(x100)]
@@ -39,6 +43,7 @@
 (define pkt-cmd-reset   0x07)
 (define pkt-req-map     0x08)
 (define pkt-req-cfg     0x09)
+(define pkt-set-test-thr 0x0A)
 
 (define pkt-live        0x80)
 (define pkt-map-row     0x81)

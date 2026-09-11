@@ -150,6 +150,12 @@
                 (setq thr-cfg-filter (fx-dec (bufget-i16 data 9)))
                 (proto-send-status 0)))
 
+        ((= cmd pkt-set-test-thr)
+            (progn
+                (setq thr-test-value (fx-dec (bufget-i16 data 1)))
+                (setq thr-test-ts (systime))
+                (proto-send-status 0)))
+
         ((= cmd pkt-cmd-save) (progn (storage-save) (proto-send-status 1)))
         ((= cmd pkt-cmd-load) (progn (storage-load) (proto-send-status 2)))
         ((= cmd pkt-cmd-reset) (progn (storage-reset) (proto-send-status 3)))

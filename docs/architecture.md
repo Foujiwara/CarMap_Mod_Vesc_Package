@@ -85,7 +85,22 @@ to move into a native library - not the rest of the package.
 regardless of source. Adding a new source (e.g. CAN-forwarded throttle from
 another VESC) means adding one more branch in `thr-read-raw` and one more
 enum value on both the LispBM and QML sides - the control loop and map
-code never need to change.
+code never need to change. Sources: 0 ADC, 1 PPM, 2 UART, 3 Test
+(bench, via USB - see below).
+
+### Bench-testing without ADC/PPM/UART hardware wired up
+
+Real ADC/PPM/UART wiring isn't always available on a bench. Source 3
+("Test") lets the QML Configurator tab drive the control loop directly
+over the same USB/CAN link VESC Tool is already connected through
+(`SET_TEST_THROTTLE`, see `docs/protocol.md`) - this is not the same thing
+as VESC Tool's own built-in duty/current bench-test panel (that one
+commands the motor directly over the commands interface and never touches
+this package's control loop at all). It's meant purely for exercising the
+map/control loop end-to-end without hardware; a 0.5 s watchdog
+(`thr-test-ts`/`thr-test-timeout` in `throttle.lisp`) zeros the value if
+no packet arrives for that long, so a dropped connection or a forgotten
+slider can't leave the motor holding a stale current-rel indefinitely.
 
 Per the official LispBM docs' own recommendation, the corresponding
 ADC/PPM app's control type should be set to **Off** in App Settings so
