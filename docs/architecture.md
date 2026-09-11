@@ -104,8 +104,16 @@ it before disconnecting or switching source.
 
 Per the official LispBM docs' own recommendation, the corresponding
 ADC/PPM app's control type should be set to **Off** in App Settings so
-that app doesn't also try to drive the motor; this package does not
-modify App Settings itself; that one manual step is documented in
+that app doesn't also try to drive the motor - but the app itself must
+stay **enabled**, only its Control Type dropdown goes to Off
+(`ADC_CTRL_TYPE_NONE` / equivalent). Disabling the app outright also
+stops it decoding the raw signal at all, which `get-adc-decoded`/
+`get-ppm` depend on, so this package would see no input either.
+Confirmed on real hardware: app disabled entirely -> no throttle
+response; app enabled with Control Type left on anything but Off ->
+jerky/stuttering acceleration (both the app and this package driving
+the motor from the same signal at once). This package does not modify
+App Settings itself; that one manual step is documented in
 `package_README.md`.
 
 ## Why the 3D view is an isometric Canvas, not "real" 3D
