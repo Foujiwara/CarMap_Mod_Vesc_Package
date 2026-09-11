@@ -19,7 +19,7 @@ Item {
     id: mainItem
     // Bumped on every edit - shown in the header as "build N" so a
     // stale/cached install is obvious at a glance instead of ambiguous.
-    property int buildMarker: 18
+    property int buildMarker: 19
     property string tabTitle: "CarMap"
     property bool isHorizontal: width > height
     property Commands vescCommands: VescIf.commands()
@@ -382,16 +382,17 @@ Item {
                 // desktop (every tab measured height=0 while width was a
                 // real number). A fixed 900px "fixed it" on desktop but
                 // then badly overflowed onto the next swipeable page on
-                // mobile, where the real screen is much shorter - so the
-                // fixed number was wrong too, just wrong in the other
-                // direction. Compute it instead from mainItem.parent's
-                // real (reactive) height minus what the header+tab bar
-                // actually take up, with 900 only as a last-resort
-                // fallback if parent isn't available yet.
+                // mobile. Computing it from mainItem.parent.height still
+                // overflowed too, which means mainItem.parent's height
+                // can't be fully trusted either on every host - so on top
+                // of that computation, hard-clamp the result to a maximum
+                // that should never overflow even a small phone screen,
+                // instead of trusting any single size source completely.
                 property real wantedHeight: mainItem.parent
-                    ? Math.max(280, mainItem.parent.height - headerRow.height - tabBar.height - 32)
-                    : 900
+                    ? Math.max(280, Math.min(620, mainItem.parent.height - headerRow.height - tabBar.height - 32))
+                    : 560
                 Layout.preferredHeight: wantedHeight
+                Layout.maximumHeight: 620
                 height: wantedHeight // belt-and-braces, see the comment
                                      // on the Pane's width/height binding
                 currentIndex: tabBar.currentIndex
