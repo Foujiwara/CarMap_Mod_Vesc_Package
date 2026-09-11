@@ -17,11 +17,6 @@ import Vedder.vesc.utility 1.0
 
 Item {
     id: mainItem
-    // QML font is a grouped property that cascades down to every Label/
-    // Button/ComboBox/etc that doesn't set its own font.pixelSize - this
-    // single line is what actually scales almost the whole interface up.
-    // Bump it further here if this build still isn't big enough.
-    font.pixelSize: 22
     property string tabTitle: "CarMap"
     property bool isHorizontal: width > height
     property Commands vescCommands: VescIf.commands()
@@ -238,9 +233,16 @@ Item {
         return stops[stops.length-1].c
     }
 
-    Rectangle {
+    // Pane (not a plain Rectangle) because it has a `font` property that
+    // cascades to every descendant Label/Button/ComboBox/etc that doesn't
+    // set its own font.pixelSize - a bare Item/Rectangle has no such
+    // property at all, and assigning font.* to one is a QML load error
+    // (this is why an earlier build failed to load entirely).
+    Pane {
         anchors.fill: parent
-        color: "#15181d"
+        padding: 0
+        font.pixelSize: 22 // bump this if the UI still isn't big enough
+        background: Rectangle { color: "#15181d" }
 
         ColumnLayout {
             anchors.fill: parent
