@@ -17,6 +17,11 @@ import Vedder.vesc.utility 1.0
 
 Item {
     id: mainItem
+    // QML font is a grouped property that cascades down to every Label/
+    // Button/ComboBox/etc that doesn't set its own font.pixelSize - this
+    // single line is what actually scales almost the whole interface up.
+    // Bump it further here if this build still isn't big enough.
+    font.pixelSize: 22
     property string tabTitle: "CarMap"
     property bool isHorizontal: width > height
     property Commands vescCommands: VescIf.commands()
@@ -244,7 +249,7 @@ Item {
 
             RowLayout {
                 Layout.fillWidth: true
-                Label { text: "CarMap Thermal Throttle"; font.pixelSize: 18; font.bold: true; color: "#e8e8e8" }
+                Label { text: "CarMap Thermal Throttle"; font.pixelSize: 30; font.bold: true; color: "#e8e8e8" }
                 Item { Layout.fillWidth: true }
                 Rectangle {
                     width: 10; height: 10; radius: 5
@@ -307,7 +312,7 @@ Item {
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    Layout.minimumHeight: 220
+                    Layout.minimumHeight: 360
                     color: "#0e1013"
                     border.color: "#333"
                     radius: 4
@@ -337,11 +342,11 @@ Item {
                                             ctx.lineWidth = 2
                                             ctx.strokeRect(x+1, y+1, cw - 3, ch - 3)
                                         }
-                                        if (cw > 26) {
+                                        if (cw > 30) {
                                             ctx.fillStyle = Math.abs(v) > 0.5 ? "#111" : "#eee"
-                                            ctx.font = "10px sans-serif"
+                                            ctx.font = Math.max(10, Math.min(15, cw * 0.32)) + "px sans-serif"
                                             ctx.textAlign = "center"
-                                            ctx.fillText(v.toFixed(2), x + cw/2, y + ch/2 + 3)
+                                            ctx.fillText(v.toFixed(2), x + cw/2, y + ch/2 + 4)
                                         }
                                     }
                                 }
@@ -356,7 +361,7 @@ Item {
                                 ctx.stroke()
                             } catch (e) {
                                 ctx.fillStyle = "#ff5555"
-                                ctx.font = "12px sans-serif"
+                                ctx.font = "15px sans-serif"
                                 ctx.textAlign = "left"
                                 ctx.fillText("Draw error: " + e, 8, 20)
                             }
@@ -477,7 +482,7 @@ Item {
                     }
 
                     Item { Layout.fillHeight: true }
-                    Label { text: "Drag on the map to multi-select cells."; wrapMode: Text.WordWrap; color: "#777"; font.pixelSize: 11 }
+                    Label { text: "Drag on the map to multi-select cells."; wrapMode: Text.WordWrap; color: "#777"; font.pixelSize: 16 }
                     }
                 }
             }
@@ -548,7 +553,7 @@ Item {
 
                 Rectangle {
                     Layout.fillWidth: true; Layout.fillHeight: true
-                    Layout.minimumHeight: 220
+                    Layout.minimumHeight: 360
                     color: "#0e1013"; border.color: "#333"; radius: 4
                     Canvas {
                         id: curveCanvas
@@ -593,7 +598,7 @@ Item {
                                 }
                             } catch (e) {
                                 ctx.fillStyle = "#ff5555"
-                                ctx.font = "12px sans-serif"
+                                ctx.font = "15px sans-serif"
                                 ctx.textAlign = "left"
                                 ctx.fillText("Draw error: " + e, 8, 20)
                             }
@@ -657,14 +662,18 @@ Item {
                     id: isoCanvas
                     anchors.fill: parent
                     anchors.margins: 16
-                    property real tileW: 14
-                    property real tileH: 7
-                    property real zScale: 46
+                    // Scaled to the canvas' real size, not fixed pixel
+                    // constants - a 21x21 grid drawn at a few px/tile was
+                    // an all-but-invisible speck in any normal-sized
+                    // canvas, which is why this tab looked "empty".
+                    property real tileW: Math.max(4, 0.85 * width / (mapN - 1))
+                    property real tileH: tileW * 0.5
+                    property real zScale: Math.max(20, height * 0.25)
 
                     function project(t, d, v) {
                         // isometric: x' = (d - t) * tileW/2, y' = (d + t) * tileH/2 - v * zScale
                         var ox = width/2
-                        var oy = height * 0.78
+                        var oy = height * 0.7
                         var x = ox + (d - t) * (tileW/2)
                         var y = oy - (d + t) * (tileH/2) - v * zScale
                         return { x: x, y: y }
@@ -709,7 +718,7 @@ Item {
                             ctx.strokeStyle = "#003"; ctx.stroke()
                         } catch (e) {
                             ctx.fillStyle = "#ff5555"
-                            ctx.font = "12px sans-serif"
+                            ctx.font = "15px sans-serif"
                             ctx.textAlign = "left"
                             ctx.fillText("Draw error: " + e, 8, 20)
                         }
@@ -927,7 +936,7 @@ Item {
                         }
                         Label {
                             text: "STOP zeroes the bench throttle immediately, same idea as VESC Tool's own Stop button - use it before disconnecting or switching source."
-                            color: "#996"; wrapMode: Text.WordWrap; Layout.fillWidth: true; font.pixelSize: 11
+                            color: "#996"; wrapMode: Text.WordWrap; Layout.fillWidth: true; font.pixelSize: 16
                         }
                     }
 
@@ -964,7 +973,7 @@ Item {
                     Label { text: "Export / Import (text)"; font.bold: true; color: "#ddd" }
                     Label {
                         text: "There is no supported way for a package's QML to write an arbitrary local file in VESC Tool, so export/import goes through plain text you copy/paste yourself."
-                        color: "#777"; wrapMode: Text.WordWrap; Layout.fillWidth: true; font.pixelSize: 11
+                        color: "#777"; wrapMode: Text.WordWrap; Layout.fillWidth: true; font.pixelSize: 16
                     }
                     RowLayout {
                         Button { text: "Export to text"; onClicked: exportArea.text = JSON.stringify({ map: mapData, cfg: {
