@@ -11,6 +11,11 @@
 (define thr-src-adc  0)
 (define thr-src-ppm  1)
 (define thr-src-uart 2)
+(define thr-src-test 3) ; bench-test value sent directly from the QML UI,
+                         ; no wiring needed - see SET_TEST_THROTTLE in
+                         ; docs/protocol.md. Bypasses min/max/deadband/
+                         ; invert since the UI already sends a clean 0..1
+                         ; value; still goes through the low-pass filter.
 
 ; Mutable config, updated by protocol.lisp on SET_THROTTLE and loaded from
 ; storage.lisp at boot. Defaults are conservative (ADC, no invert).
@@ -30,6 +35,16 @@
 (define uart-buf (array-create 8))
 (define uart-last-raw 0.0)
 (define uart-started 0)
+
+; Bench-test value, set by handle-packet on SET_TEST_THROTTLE. Only used
+; when thr-cfg-source == thr-src-test. thr-test-ts is refreshed on every
+; SET_TEST_THROTTLE packet; if VESC Tool disconnects (or the slider is
+; simply forgotten) mid-test, thr-read-raw falls back to 0 once no packet
+; has arrived for thr-test-timeout seconds, instead of holding whatever
+; current-rel was last requested forever.
+(define thr-test-value 0.0)
+(define thr-test-ts (systime))
+(define thr-test-timeout 0.5)
 
 (defun uart-throttle-init ()
     (if (= uart-started 0)
@@ -55,7 +70,10 @@
     (cond
         ((= thr-cfg-source thr-src-adc) (get-adc-decoded 0))
         ((= thr-cfg-source thr-src-ppm) (max-f 0.0 (get-ppm)))
-        (t (uart-throttle-raw))
+        ((= thr-cfg-source thr-src-uart) (uart-throttle-raw))
+        ((= thr-cfg-source thr-src-test)
+            (if (> (secs-since thr-test-ts) thr-test-timeout) 0.0 thr-test-value))
+        (t 0.0) ; unknown source: fail safe to zero throttle
     ))
 
 ; Apply min/max calibration, deadband and inversion; returns 0..1.
@@ -69,9 +87,13 @@
     )))))
 
 ; Public entry point: read + normalize + low-pass filter. Call once per
-; control loop iteration.
+; control loop iteration. The Test source skips calibration (see
+; thr-src-test above) but still gets the low-pass filter so bench-test
+; behavior matches every other source.
 (defun thr-read ()
-    (let ((n (thr-normalize (thr-read-raw))))
+    (let ((n (if (= thr-cfg-source thr-src-test)
+                 (clamp01 (thr-read-raw))
+                 (thr-normalize (thr-read-raw)))))
     (progn
         (setq thr-filtered (+ thr-filtered (* thr-cfg-filter (- n thr-filtered))))
         thr-filtered)

@@ -32,6 +32,7 @@ Item {
     readonly property int cmdReset:      0x07
     readonly property int cmdReqMap:     0x08
     readonly property int cmdReqCfg:     0x09
+    readonly property int cmdSetTestThr: 0x0A
 
     readonly property int rxLive:    0x80
     readonly property int rxMapRow:  0x81
@@ -144,6 +145,9 @@ Item {
     function sendReset() { sendPacket([cmdReset]) }
     function requestMap() { sendPacket([cmdReqMap]) }
     function requestCfg() { sendPacket([cmdReqCfg]) }
+    function sendTestThrottle(v) {
+        sendPacket([cmdSetTestThr].concat(i16Bytes(fxEnc(v))))
+    }
 
     // ---------------------------------------------------------------
     // Receive path
@@ -845,12 +849,39 @@ Item {
                     RowLayout {
                         ComboBox {
                             id: srcCombo
-                            model: ["ADC", "PPM", "UART"]
+                            model: ["ADC", "PPM", "UART", "Test (bench, via USB)"]
                             currentIndex: thrSource
-                            onActivated: (idx) => thrSource = idx
+                            onActivated: (idx) => { thrSource = idx; sendSetThrottle() }
                         }
                         CheckBox { text: "Invert"; checked: thrInvert === 1; onToggled: thrInvert = checked ? 1 : 0 }
                     }
+
+                    // No ADC/PPM/UART hardware wired up yet? Pick "Test
+                    // (bench, via USB)" above, then drag this - it drives
+                    // the real control loop over the same USB/CAN link
+                    // VESC Tool is already connected through, no wiring
+                    // needed. See SET_TEST_THROTTLE in docs/protocol.md.
+                    ColumnLayout {
+                        visible: thrSource === 3
+                        Layout.fillWidth: true
+                        Label { text: "Bench throttle (test source)"; font.bold: true; color: "#ddd" }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Slider {
+                                id: benchThrottle
+                                Layout.fillWidth: true
+                                from: 0; to: 1
+                                onMoved: sendTestThrottle(value)
+                                onPressedChanged: if (!pressed) sendTestThrottle(value)
+                            }
+                            Label { text: (benchThrottle.value*100).toFixed(0) + " %"; color: "#fff" }
+                        }
+                        Label {
+                            text: "Releasing the slider does NOT return it to 0 automatically - drag it back down yourself before disconnecting."
+                            color: "#996"; wrapMode: Text.WordWrap; Layout.fillWidth: true; font.pixelSize: 11
+                        }
+                    }
+
                     GridLayout {
                         columns: 3
                         columnSpacing: 10; rowSpacing: 8
