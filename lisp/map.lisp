@@ -19,16 +19,22 @@
 ; from these two constants except the wire packet size in protocol.lisp
 ; (21 values/row), which should be updated to match DUTY-N if you resize.
 ;
-; @const-start/@const-end (see util.lisp's comment) moves everything in
-; this file to flash instead of the RAM heap. This is the real test of
-; the v0.1.46 crash theory: this file calls util.lisp's clamp-f/
-; clamp01/max-f/to-fp/cell-to-i8/i8-to-cell, which are ALSO flash-
-; resident (their own file's separate @const-start block, confirmed
-; working alone in v0.1.48) - if a flash function in one file calling a
-; flash function in a DIFFERENT file's own block is what actually broke
-; things, it should reproduce here. If it works, that theory was wrong
-; and the crash was something else.
-@const-start
+; NOT wrapped in @const-start: confirmed on real hardware (v0.1.49)
+; that this file crashes (type_error, "v UNDEFINED" in bufset-i8) when
+; flash-resident, because it calls util.lisp's clamp-f/clamp01/max-f/
+; to-fp/cell-to-i8/i8-to-cell, which are themselves flash-resident in
+; util.lisp's own SEPARATE @const-start block - a flash function in one
+; file calling a flash function in a different file's own block breaks
+; parameter binding resolution. This confirms the theory from the
+; v0.1.46 crash. util.lisp/protocol.lisp stay wrapped (self-contained,
+; call nothing outside their own file); this file, throttle.lisp,
+; storage.lisp and package.lisp stay unwrapped since they all call into
+; util.lisp - calling a flash function from normal (non-flash) code is
+; confirmed safe, only flash-calling-flash-across-files is not. Fixing
+; this properly would mean duplicating the tiny shared helpers locally
+; into each file that needs them so no file's own flash block ever
+; calls into another file's - not done here, real work for a future
+; pass if the current ~95% heap usage needs to come down further.
 
 (define map-thr-n 21)
 (define map-duty-n 21)
@@ -147,5 +153,3 @@
         ((= shape 2) (- 1.0 (pow (- 1.0 p) 3)))
         (t (pow p 4))
     ))
-
-@const-end
