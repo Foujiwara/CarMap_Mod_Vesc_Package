@@ -17,7 +17,7 @@ voltage) remain fully in charge.
   0..1 with configurable min/max/deadband/invert/filter.
 - Reads the current duty cycle and ERPM.
 - Looks up a 21x21 Throttle x Duty grid with bilinear interpolation to get
-  a Current Relative value every control loop iteration (~100 Hz).
+  a Current Relative value every control loop iteration (~200 Hz).
 - Sends that value with `set-current-rel`.
 
 ## Setup (one-time, in VESC Tool)
@@ -27,13 +27,21 @@ voltage) remain fully in charge.
    Disabling the app entirely also stops it decoding the signal, so
    this package would see no input; leaving Control Type on anything
    else means the app and this package both try to drive the motor at
-   once, which shows up as jerky/stuttering acceleration.
+   once, which shows up as jerky/stuttering acceleration. If input still
+   feels a bit delayed once that's set correctly, also turn off
+   **Use Filter** in the same App Settings -> ADC/PPM page - it's a
+   separate option (on by default) that adds its own ~5-10 ms of
+   smoothing to the raw signal before this package ever reads it.
 2. Open the **CarMap** tab.
 3. Pick a throttle source and calibrate min/max/deadband if needed.
 4. Pick a preset (Thermal Street / Thermal Race / Wet / Direct Electric)
    or dial in the Configurator parameters yourself, then
    **Apply parameters -> generate map**.
-5. **Save to VESC** so the map and settings survive a reboot.
+5. **Save to VESC** so the map and settings survive a reboot. Come to a
+   complete stop first - the VESC's own eeprom write function waits for
+   the motor to release before it will actually write to flash, so a
+   Save made while still moving can silently fail to persist even
+   though the app reports success.
 
 See the Map / Curves / 3D tabs to inspect and hand-edit the map, and the
 live dot to see where you are on it while riding.

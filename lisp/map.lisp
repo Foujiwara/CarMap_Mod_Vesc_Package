@@ -27,23 +27,29 @@
 
 ; ---- bilinear interpolation ----------------------------------------------
 ; thr01, duty01 in [0, 1]. duty is expected to already be abs(get-duty).
+;
+; A single `let` in LispBM allows mutually-referencing bindings (see the
+; "let" chapter of the LispBM reference), so this is one environment
+; frame instead of five nested ones - called at up to 100+ Hz from
+; control-loop, so cutting the per-call allocation matters more here
+; than readability alone would justify.
 (defun map-lookup (thr01 duty01)
     (let ((tf (* (clamp01 thr01) (- map-thr-n 1)))
-          (df (* (clamp01 duty01) (- map-duty-n 1))))
-    (let ((t0 (to-i tf))
-          (d0 (to-i df)))
-    (let ((t1 (if (< t0 (- map-thr-n 1)) (+ t0 1) t0))
+          (df (* (clamp01 duty01) (- map-duty-n 1)))
+          (t0 (to-i tf))
+          (d0 (to-i df))
+          (t1 (if (< t0 (- map-thr-n 1)) (+ t0 1) t0))
           (d1 (if (< d0 (- map-duty-n 1)) (+ d0 1) d0))
           (tw (- tf (to-float t0)))
-          (dw (- df (to-float d0))))
-    (let ((v00 (map-get-cell t0 d0))
+          (dw (- df (to-float d0)))
+          (v00 (map-get-cell t0 d0))
           (v01 (map-get-cell t0 d1))
           (v10 (map-get-cell t1 d0))
-          (v11 (map-get-cell t1 d1)))
-    (let ((v0 (+ (* v00 (- 1.0 dw)) (* v01 dw)))
+          (v11 (map-get-cell t1 d1))
+          (v0 (+ (* v00 (- 1.0 dw)) (* v01 dw)))
           (v1 (+ (* v10 (- 1.0 dw)) (* v11 dw))))
     (+ (* v0 (- 1.0 tw)) (* v1 tw))
-    ))))))
+    ))
 
 ; ---- default map generator (Thermal Street) -------------------------------
 ; Mirrors the QML configurator formulas (see docs/map_format.md) so the
@@ -51,15 +57,15 @@
 (defun gen-thermal-map (torque-resp speed-coupling trans-width trans-shape
                          high-hold engine-brake overrun-regen regen-curve)
     (looprange ti 0 map-thr-n
-        (let ((thr (/ (to-float ti) (to-float (- map-thr-n 1)))))
-        (let ((peak (thermal-peak thr torque-resp high-hold))
+        (let ((thr (/ (to-float ti) (to-float (- map-thr-n 1))))
+              (peak (thermal-peak thr torque-resp high-hold))
               (balance-duty (thermal-balance-duty thr speed-coupling)))
         (looprange di 0 map-duty-n
             (let ((duty (/ (to-float di) (to-float (- map-duty-n 1)))))
             (map-set-cell ti di
                 (thermal-cell thr duty peak balance-duty trans-width
                               trans-shape engine-brake overrun-regen regen-curve))
-            )))
+            ))
         )))
 
 ; Peak current-rel requested at this throttle, before duty shaping.

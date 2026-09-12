@@ -98,3 +98,16 @@ eeprom write is committed to flash the same way the rest of the firmware
 persists its eeprom data. `storage-load` checks the magic value first and
 returns `nil` (caller then calls `storage-reset`, which also generates the
 Thermal Street default map) if nothing valid has ever been saved.
+
+**Save only while the vehicle is fully stopped.** Reading
+`conf_general.c` in vedderb/bldc: every single `eeprom-store-f`/
+`eeprom-store-i` call (roughly 125 of them per `storage-save`, mostly
+the 111 map slots) calls `mc_interface_wait_for_motor_release_both`
+with a 3-second timeout *before* actually writing to flash - and if
+that timeout is hit (motor still spinning/braking), the underlying
+firmware function returns as if it succeeded without ever writing
+that value, so `storage-save` reports success (`STATUS` code 1) while
+some values silently never reach flash. If a setting isn't surviving
+a reboot despite clicking "Save to VESC", the most likely cause is
+having saved while still moving rather than a code bug - come to a
+complete stop first, then Save.
