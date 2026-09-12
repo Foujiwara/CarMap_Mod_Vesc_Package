@@ -18,6 +18,16 @@
 ; everything else (index math, storage packing, protocol row size) derives
 ; from these two constants except the wire packet size in protocol.lisp
 ; (21 values/row), which should be updated to match DUTY-N if you resize.
+;
+; Everything in this file goes in one @const-start/@const-end block
+; (moves it to flash instead of the RAM heap - see util.lisp's comment
+; on this): map-thr-n/duty-n/cells never change, map-buf's own contents
+; mutate via bufset-i8 but the binding itself is never reassigned with
+; setq, and every defun here is fixed code. Confirmed as the real fix
+; for heap sitting at ~97% used even at idle on real hardware - a
+; script's own function bodies otherwise live permanently on the tiny
+; RAM heap just by existing, regardless of what they do at runtime.
+@const-start
 
 (define map-thr-n 21)
 (define map-duty-n 21)
@@ -136,3 +146,5 @@
         ((= shape 2) (- 1.0 (pow (- 1.0 p) 3)))
         (t (pow p 4))
     ))
+
+@const-end
