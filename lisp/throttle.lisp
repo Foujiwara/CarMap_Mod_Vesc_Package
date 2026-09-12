@@ -1,5 +1,6 @@
 ; throttle.lisp - normalize whatever throttle source is configured into a
-; single 0.0 .. 1.0 value, independent of the source-specific raw range.
+; single fp-scale (0..1000, see util.lisp) value, independent of the
+; source-specific raw range.
 ;
 ; Sources map to the app-adc / app-ppm / app-uart control-type "Off"
 ; convention documented for get-adc-decoded / get-ppm: leave the
@@ -7,6 +8,13 @@
 ; app itself never drives the motor, and read the raw/decoded value from
 ; here instead. This package never changes App Settings itself - see
 ; docs/architecture.md for the one-time manual setup step.
+;
+; Everything below fp-scale is a plain integer (fixnum, zero heap cost -
+; see util.lisp) rather than a float. get-adc-decoded/get-ppm/get-adc/
+; conf-get are native extensions that always return a real float - that
+; can't be avoided - but each one is converted to fp-scale immediately
+; at the point of reading, instead of staying a float through every
+; subsequent calculation the way this file worked before.
 
 (define thr-src-adc  0)
 (define thr-src-ppm  1)
@@ -14,25 +22,29 @@
 (define thr-src-test 3) ; bench-test value sent directly from the QML UI,
                          ; no wiring needed - see SET_TEST_THROTTLE in
                          ; docs/protocol.md. Bypasses min/max/deadband/
-                         ; invert since the UI already sends a clean 0..1
-                         ; value; still goes through the low-pass filter.
+                         ; invert since the UI already sends a clean
+                         ; fp-scale value; still goes through the
+                         ; low-pass filter.
 
 ; Mutable config, updated by protocol.lisp on SET_THROTTLE and loaded from
-; storage.lisp at boot. Defaults are conservative (ADC, no invert).
+; storage.lisp at boot. Defaults are conservative (ADC, no invert). All
+; fp-scale integers (0..1000 = 0.0..1.0) - this is also exactly the wire
+; format's own x1000 fixed point, so no conversion is needed when a
+; SET_THROTTLE/CFG_ECHO packet crosses the wire (see package.lisp).
 (define thr-cfg-source   thr-src-adc)
 (define thr-cfg-invert   0)
-(define thr-cfg-min      0.02)   ; normalized raw value treated as 0%
-(define thr-cfg-max      0.98)   ; normalized raw value treated as 100%
-(define thr-cfg-deadband 0.02)   ; ignored band around 0 after mapping
-(define thr-cfg-filter   1.0)    ; low-pass alpha, 0 = frozen, 1 = no
+(define thr-cfg-min      20)     ; 0.02
+(define thr-cfg-max      980)    ; 0.98
+(define thr-cfg-deadband 20)     ; 0.02
+(define thr-cfg-filter   1000)   ; low-pass alpha, 0 = frozen, 1000 = no
                                   ; filtering/instant. Real-hardware
                                   ; testing found any filtering here felt
                                   ; like noticeable input latency, so the
-                                  ; default is now "off" (1.0); lower it
+                                  ; default is now "off" (1000); lower it
                                   ; from the Configurator tab only if your
                                   ; particular input is actually noisy.
 
-(define thr-filtered 0.0)
+(define thr-filtered 0)
 
 ; Braking beyond the map's own throttle-released engine braking (ADC
 ; only, for now). Two different physical setups, both ADC-only:
@@ -49,26 +61,53 @@
 ; Either way, when the brake side is above its deadband it overrides the
 ; map entirely with a direct, proportional negative current-rel (see
 ; control-loop in package.lisp); the map's own throttle-released
-; braking still applies whenever the brake reads 0 (at rest, or off).
+; braking still applies whenever the brake channel reads 0 (at rest, or
+; disabled).
 (define thr-brake-none  0)
 (define thr-brake-dual  1)
 (define thr-brake-bidir 2)
 (define thr-cfg-brake-mode thr-brake-none)
 
+; ADC bidirectional calibration cache (adc-v1-start/-center/-end from
+; App Settings -> ADC). These almost never change while this package is
+; running, so they're read once via conf-get here instead of on every
+; single control-loop tick: fewer native calls (real CPU cost, not just
+; heap - conf-get looks up a named field in the app config struct) and
+; fewer fresh float boxes (a cached global still boxes the value once at
+; cache time, not again on every read). Cached once at boot
+; (package.lisp calls thr-adc-cal-refresh right after loading/resetting
+; storage); if you change the ADC calibration in App Settings while
+; this package is already running, reboot the VESC (or reinstall the
+; package) to pick up the new values.
+(define thr-adc-cal-start 0.0)
+(define thr-adc-cal-center 0.0)
+(define thr-adc-cal-end 0.0)
+
+(defun thr-adc-cal-refresh ()
+    (progn
+        (setq thr-adc-cal-start (conf-get 'adc-v1-start))
+        (setq thr-adc-cal-center (conf-get 'adc-v1-center))
+        (setq thr-adc-cal-end (conf-get 'adc-v1-end))
+    ))
+
 ; UART throttle: a tiny 3-byte frame so noise on the line can't be mistaken
 ; for a valid reading. Frame: <0xA5> <percent 0..200, meaning 0..100.0%>
 ; <checksum = 0xA5 xor percent>. Anything that doesn't check out keeps the
-; last good value instead of jumping to garbage.
+; last good value instead of jumping to garbage. b1 (0..200) converts to
+; fp-scale (0..1000) with a plain integer multiply (*5) - no float ever
+; appears in this path at all, unlike every other source (which all read
+; a native float at some point).
 (define uart-buf (array-create 8))
-(define uart-last-raw 0.0)
+(define uart-last-raw 0)
 (define uart-started 0)
 
 ; Bench-test value, set by handle-packet on SET_TEST_THROTTLE. Only used
-; when thr-cfg-source == thr-src-test. No automatic timeout here - the
-; QML side has an explicit Stop button (like VESC Tool's own bench-test
-; panel) that sends 0 directly; use it before disconnecting or changing
-; source.
-(define thr-test-value 0.0)
+; when thr-cfg-source == thr-src-test. fp-scale, matching the wire value
+; directly (no conversion needed in either direction - see
+; package.lisp). No automatic timeout here - the QML side has an
+; explicit Stop button (like VESC Tool's own bench-test panel) that
+; sends 0 directly; use it before disconnecting or changing source.
+(define thr-test-value 0)
 
 (defun uart-throttle-init ()
     (if (= uart-started 0)
@@ -84,88 +123,96 @@
               (b1 (bufget-u8 uart-buf 1))
               (b2 (bufget-u8 uart-buf 2)))
         (if (and (= b0 0xA5) (< b1 201) (= b2 (bitwise-xor 0xA5 b1)))
-            (progn (setq uart-last-raw (/ (to-float b1) 200.0)) uart-last-raw)
+            (progn (setq uart-last-raw (* b1 5)) uart-last-raw)
             uart-last-raw))
         uart-last-raw))
     ))
 
 ; Bidirectional single-channel ADC1 read, using the ADC app's OWN
-; start/center/end calibration (App Settings -> ADC) rather than this
-; package's own min/max, since those three values already fully
-; describe a center-zero throttle. Returns a signed -1..1 value: >0 is
-; the accelerator side, <0 is the brake side, both already fractions of
-; their own half of the range (no separate normalize step needed).
+; start/center/end calibration (App Settings -> ADC, cached above)
+; rather than this package's own min/max, since those three values
+; already fully describe a center-zero throttle. Returns a signed
+; fp-scale value: >0 is the accelerator side, <0 is the brake side,
+; both already fractions of their own half of the range (no separate
+; normalize step needed). The calibration values themselves are floats
+; (cached, not re-read every tick - see thr-adc-cal-refresh) and the
+; raw ADC voltage (get-adc) is always a float too, so this function
+; still does float math internally - unavoidable, this is literally
+; reading and comparing voltages - but its final result is converted to
+; fp-scale once, right at the end, same as every other source.
 (defun thr-adc-signed ()
-    (let ((raw (get-adc 0))
-          (v-start (conf-get 'adc-v1-start))
-          (v-center (conf-get 'adc-v1-center))
-          (v-end (conf-get 'adc-v1-end)))
-    (if (>= raw v-center)
-        (clamp01 (/ (- raw v-center) (max-f 0.001 (- v-end v-center))))
-        (- (clamp01 (/ (- v-center raw) (max-f 0.001 (- v-center v-start)))))
-    )))
+    (let ((raw (get-adc 0)))
+    (to-fp
+        (if (>= raw thr-adc-cal-center)
+            (clamp01 (/ (- raw thr-adc-cal-center) (max-f 0.001 (- thr-adc-cal-end thr-adc-cal-center))))
+            (- (clamp01 (/ (- thr-adc-cal-center raw) (max-f 0.001 (- thr-adc-cal-center thr-adc-cal-start)))))
+        ))))
 
-; Raw, source-specific, still 0..1.
+; Raw, source-specific, fp-scale (0..1000).
 (defun thr-read-raw ()
     (cond
         ((= thr-cfg-source thr-src-adc)
             (if (= thr-cfg-brake-mode thr-brake-bidir)
-                (max-f 0.0 (thr-adc-signed))
-                (get-adc-decoded 0)))
-        ((= thr-cfg-source thr-src-ppm) (max-f 0.0 (get-ppm)))
+                (max-f 0 (thr-adc-signed))
+                (to-fp (get-adc-decoded 0))))
+        ((= thr-cfg-source thr-src-ppm) (max-f 0 (to-fp (get-ppm))))
         ((= thr-cfg-source thr-src-uart) (uart-throttle-raw))
         ((= thr-cfg-source thr-src-test) thr-test-value)
-        (t 0.0) ; unknown source: fail safe to zero throttle
+        (t 0) ; unknown source: fail safe to zero throttle
     ))
 
-; Apply min/max calibration, deadband and inversion; returns 0..1.
-; One flat `let` (LispBM allows later bindings to reference earlier ones
-; in the same let - see map-lookup) instead of four nested ones: same
-; result, one environment frame instead of four, called every control
-; loop tick.
+; Apply min/max calibration, deadband and inversion; fp-scale in, fp-scale
+; out. One flat `let` (LispBM allows later bindings to reference earlier
+; ones in the same let - see map-lookup) instead of four nested ones:
+; same result, one environment frame instead of four, called every
+; control loop tick. Pure integer math throughout - no floats, no heap
+; allocation at all in this function.
 (defun thr-normalize (raw)
-    (let ((v (/ (- raw thr-cfg-min) (max-f 0.001 (- thr-cfg-max thr-cfg-min))))
-          (vc (clamp01 v))
-          (vd (if (< vc thr-cfg-deadband) 0.0
-                  (/ (- vc thr-cfg-deadband) (max-f 0.001 (- 1.0 thr-cfg-deadband)))))
-          (vf (clamp01 vd)))
-    (if (= thr-cfg-invert 1) (- 1.0 vf) vf)
+    (let ((v (/ (* (- raw thr-cfg-min) fp-scale) (max-f 1 (- thr-cfg-max thr-cfg-min))))
+          (vc (clamp-f v 0 fp-scale))
+          (vd (if (< vc thr-cfg-deadband) 0
+                  (/ (* (- vc thr-cfg-deadband) fp-scale) (max-f 1 (- fp-scale thr-cfg-deadband)))))
+          (vf (clamp-f vd 0 fp-scale)))
+    (if (= thr-cfg-invert 1) (- fp-scale vf) vf)
     ))
 
 ; Public entry point: read + normalize + low-pass filter. Call once per
-; control loop iteration. The Test source and bidirectional-ADC mode
-; both skip this package's own min/max/deadband/invert calibration
-; (Test because the UI already sends a clean 0..1 value; bidirectional
-; because thr-adc-signed already normalized against the ADC app's own
-; start/center/end calibration) but still go through the low-pass
-; filter so behavior matches every other source.
+; control loop iteration. Returns fp-scale. The Test source and
+; bidirectional-ADC mode both skip this package's own min/max/deadband/
+; invert calibration (Test because the UI already sends a clean fp-scale
+; value; bidirectional because thr-adc-signed already normalized against
+; the ADC app's own start/center/end calibration) but still go through
+; the low-pass filter so behavior matches every other source. The filter
+; itself is now a pure integer EMA (thr-filtered is fp-scale, updated by
+; an integer multiply-then-divide instead of a float multiply) - no
+; heap allocation here either.
 (defun thr-read ()
     (let ((skip-normalize (or (= thr-cfg-source thr-src-test)
                                (and (= thr-cfg-source thr-src-adc) (= thr-cfg-brake-mode thr-brake-bidir))))
-          (n (if skip-normalize (clamp01 (thr-read-raw)) (thr-normalize (thr-read-raw)))))
+          (n (if skip-normalize (clamp-f (thr-read-raw) 0 fp-scale) (thr-normalize (thr-read-raw)))))
     (progn
-        (setq thr-filtered (+ thr-filtered (* thr-cfg-filter (- n thr-filtered))))
+        (setq thr-filtered (+ thr-filtered (/ (* thr-cfg-filter (- n thr-filtered)) fp-scale)))
         thr-filtered)
     ))
 
-; Brake side, 0..1. Dual mode reads ADC2 (channel 1) with the same
-; min/max/deadband calibration as the main channel (never inverted -
-; that setting is about the accelerator's own direction, not this
-; separate lever); bidirectional mode reads the negative half of
+; Brake side, fp-scale (0..1000). Dual mode reads ADC2 (channel 1) with
+; the same min/max/deadband calibration as the main channel (never
+; inverted - that setting is about the accelerator's own direction, not
+; this separate lever); bidirectional mode reads the negative half of
 ; thr-adc-signed (already calibrated against the ADC app's own
 ; start/center/end). No filtering either way - a brake benefits from
-; being immediate, not smoothed. Returns 0.0 when off or on any
-; non-ADC source, since these are ADC-specific setups.
+; being immediate, not smoothed. Returns 0 when off or on any non-ADC
+; source, since these are ADC-specific setups.
 (defun thr-brake-read ()
     (cond
-        ((not (= thr-cfg-source thr-src-adc)) 0.0)
+        ((not (= thr-cfg-source thr-src-adc)) 0)
         ((= thr-cfg-brake-mode thr-brake-dual)
-            (let ((v (/ (- (get-adc-decoded 1) thr-cfg-min) (max-f 0.001 (- thr-cfg-max thr-cfg-min))))
-                  (vc (clamp01 v)))
-            (if (< vc thr-cfg-deadband) 0.0
-                (clamp01 (/ (- vc thr-cfg-deadband) (max-f 0.001 (- 1.0 thr-cfg-deadband)))))
+            (let ((v (/ (* (- (to-fp (get-adc-decoded 1)) thr-cfg-min) fp-scale) (max-f 1 (- thr-cfg-max thr-cfg-min))))
+                  (vc (clamp-f v 0 fp-scale)))
+            (if (< vc thr-cfg-deadband) 0
+                (clamp-f (/ (* (- vc thr-cfg-deadband) fp-scale) (max-f 1 (- fp-scale thr-cfg-deadband))) 0 fp-scale))
             ))
         ((= thr-cfg-brake-mode thr-brake-bidir)
-            (max-f 0.0 (- (thr-adc-signed))))
-        (t 0.0)
+            (max-f 0 (- (thr-adc-signed))))
+        (t 0)
     ))
