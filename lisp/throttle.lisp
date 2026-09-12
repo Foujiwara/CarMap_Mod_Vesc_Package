@@ -92,12 +92,21 @@
 (define thr-adc-cal-end 0.0)
 (define thr-adc-cal-loaded 0)
 
+; `adc-v1-center` is a real conf-get key, but confirmed too recent to
+; rely on (added to bldc 2026-06-09; adc-v1-start/-end have existed
+; since 2023) - "Parameter not recognized" (eval_error) on real
+; hardware running an older firmware. Compute the center as the
+; midpoint of start/end instead: that's what any bidirectional ADC
+; setup effectively assumed before this dedicated field existed, and
+; matches a normal (symmetric) calibration - only an unusually
+; asymmetric one would differ, which conf-get's own center field would
+; only help with on firmware new enough to have it anyway.
 (defun thr-adc-cal-ensure ()
     (if (= thr-adc-cal-loaded 0)
         (progn
             (setq thr-adc-cal-start (conf-get 'adc-v1-start))
-            (setq thr-adc-cal-center (conf-get 'adc-v1-center))
             (setq thr-adc-cal-end (conf-get 'adc-v1-end))
+            (setq thr-adc-cal-center (/ (+ thr-adc-cal-start thr-adc-cal-end) 2.0))
             (setq thr-adc-cal-loaded 1))
         nil))
 
