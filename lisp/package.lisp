@@ -52,16 +52,15 @@
             (setq live-erpm (get-rpm))
             ; The direct brake channel was a straight 1:1 lever-position
             ; -> current-rel mapping, which felt abrupt/violent on real
-            ; hardware. throttle-curve is the same native extension the
-            ; stock ADC/PPM/VESC Remote apps use for their own throttle
-            ; curve setting - reusing it here (brake side only, accel
-            ; constant unused since the value passed is always <= 0)
-            ; means the same familiar Linear/Natural/Exponential + curve
-            ; constant control as the rest of VESC Tool, not a bespoke
-            ; formula.
+            ; hardware. brake-curve-apply (throttle.lisp) reimplements
+            ; the same Linear/Natural/Exponential + curve-constant math
+            ; as VESC Tool's own ADC/PPM throttle curve setting, in pure
+            ; LispBM - calling the native throttle-curve extension here
+            ; instead caused an out_of_memory crash on real hardware, so
+            ; this avoids that extension entirely.
             (setq live-cur-rel
                 (if (> live-brake 0.0)
-                    (throttle-curve (- live-brake) 0.0 cfg-brake-curve-k cfg-brake-curve-mode)
+                    (- (brake-curve-apply live-brake cfg-brake-curve-k cfg-brake-curve-mode))
                     (map-lookup live-throttle (clamp01 (abs live-duty)))))
             (set-current-rel live-cur-rel)
             (timeout-reset)
