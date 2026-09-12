@@ -85,8 +85,29 @@
                 (if (> live-brake 0)
                     (- live-brake)
                     (map-lookup live-throttle (clamp-f (to-fp (abs live-duty)) 0 fp-scale))))
-            (set-current-rel (fp-to-f live-cur-rel))
-            (timeout-reset)
+            ; storage-pause-ticks (storage.lisp) - see storage-save.
+            ; Every eeprom-store-f/i call waits up to 3s for the FOC
+            ; state machine to reach MC_STATE_OFF before it will write
+            ; anything (confirmed in mc_interface.c) - impossible while
+            ; this loop keeps calling set-current-rel every tick, even
+            ; with 0 current, since that's still "controlling", not
+            ; "released". This was the actual reason Save never
+            ; persisted anything on real hardware, 100% reproducibly -
+            ; it has nothing to do with the vehicle moving, it's this
+            ; script's own control loop holding the motor. Skipping
+            ; set-current-rel/timeout-reset here lets the firmware's own
+            ; configured motor timeout elapse and release control
+            ; cleanly (the same mechanism a lost RC signal relies on)
+            ; for the whole duration of storage-save. The counter
+            ; decrements unconditionally every tick regardless of what
+            ; storage-save does, so this can't get stuck - even a
+            ; hypothetical error inside storage-save can only pause
+            ; driving for its initial value, never longer.
+            (if (> storage-pause-ticks 0)
+                (setq storage-pause-ticks (- storage-pause-ticks 1))
+                (progn
+                    (set-current-rel (fp-to-f live-cur-rel))
+                    (timeout-reset)))
             ; 200 Hz instead of the original 100 Hz: halves the loop's own
             ; contribution to input-to-current latency. Safe to tighten
             ; now that map-lookup/thr-normalize/thr-read (throttle.lisp,

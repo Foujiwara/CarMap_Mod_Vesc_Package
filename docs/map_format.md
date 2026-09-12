@@ -125,15 +125,27 @@ persists its eeprom data. `storage-load` checks the magic value first and
 returns `nil` (caller then calls `storage-reset`, which also generates the
 Thermal Street default map) if nothing valid has ever been saved.
 
-**Save only while the vehicle is fully stopped.** Reading
-`conf_general.c` in vedderb/bldc: every single `eeprom-store-f`/
-`eeprom-store-i` call (roughly 125 of them per `storage-save`, mostly
-the 111 map slots) calls `mc_interface_wait_for_motor_release_both`
-with a 3-second timeout *before* actually writing to flash - and if
-that timeout is hit (motor still spinning/braking), the underlying
-firmware function returns as if it succeeded without ever writing
-that value, so `storage-save` reports success (`STATUS` code 1) while
-some values silently never reach flash. If a setting isn't surviving
-a reboot despite clicking "Save to VESC", the most likely cause is
-having saved while still moving rather than a code bug - come to a
-complete stop first, then Save.
+**Every `eeprom-store-f`/`eeprom-store-i` call requires the motor to be
+genuinely released first, not just "the vehicle stopped".** Reading
+`mc_interface.c` in vedderb/bldc: each one calls
+`mc_interface_wait_for_motor_release_both`, which polls
+`mcpwm_foc_get_state()` for up to 3 seconds waiting for `MC_STATE_OFF`
+- and if that timeout is hit, the underlying firmware function returns
+as if it succeeded without ever writing anything, so `storage-save`
+reports success (`STATUS` code 1) while some or all values silently
+never reach flash.
+
+The important part: `MC_STATE_OFF` means *no active current command at
+all*, not "vehicle stationary". This package's own `control-loop`
+calls `set-current-rel` unconditionally every tick, even when
+commanding 0 A - that still counts as "controlling", not "released",
+so **every single `storage-save` would fail to persist anything, 100%
+of the time, regardless of vehicle motion**, unless something
+temporarily stops the control loop from driving during the save.
+`storage-pause-ticks` (`storage.lisp`) is that something: `storage-save`
+sets it before touching eeprom, `control-loop` skips
+`set-current-rel`/`timeout-reset` entirely while it's nonzero (letting
+the firmware's own configured motor timeout elapse and release control
+cleanly - the same mechanism a lost RC signal relies on), and it
+decrements on its own every tick regardless of what `storage-save`
+does, so it can never get stuck even if `storage-save` itself errors.
