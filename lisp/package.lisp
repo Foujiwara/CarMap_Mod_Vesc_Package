@@ -38,11 +38,6 @@
 (define live-cur-rel 0)
 (define live-brake 0)
 
-; ADC bidirectional-mode calibration is cached (see throttle.lisp) since
-; it almost never changes while the package runs - refresh it once here
-; at boot, same as the rest of the config.
-(thr-adc-cal-refresh)
-
 ; ---------------------------------------------------------------------
 ; Control loop: read inputs, look up the map, apply the current-rel
 ; command. Runs as fast as practical; timeout-reset keeps the motor
