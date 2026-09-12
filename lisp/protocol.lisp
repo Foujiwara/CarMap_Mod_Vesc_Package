@@ -37,6 +37,14 @@
 ;   0x83 CFG_ECHO [0x83 ... mirrors 0x03/0x04 payloads concatenated, plus
 ;                   brake_enable:u8 at the end ...]
 
+; @const-start/@const-end (see util.lisp's comment) moves everything
+; below to flash instead of the RAM heap - none of it is ever
+; reassigned with setq, and nothing here calls another file's own
+; functions (only native extensions), so this is a safe, self-contained
+; block like util.lisp's - not the flash-to-flash cross-file pattern
+; suspected of the v0.1.46 crash.
+@const-start
+
 (define pkt-set-cell    0x01)
 (define pkt-set-map-row 0x02)
 (define pkt-set-config  0x03)
@@ -69,3 +77,5 @@
         (bufset-u8 b 0 pkt-status)
         (bufset-u8 b 1 code)
         (proto-send b))))
+
+@const-end
