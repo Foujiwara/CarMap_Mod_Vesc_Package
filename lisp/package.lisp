@@ -43,6 +43,19 @@
 ; -1..0 current-rel from a real brake pedal/lever, not a duty-dependent
 ; curve. The map's own throttle-released engine braking still applies
 ; whenever the brake channel reads 0 (at rest, or disabled).
+;
+; This is deliberately the fixed, non-adjustable version: v0.1.34-0.1.37
+; tried to make this shaped/adjustable (first via the native
+; throttle-curve extension, then via a pure-lisp reimplementation of the
+; same math using pow/exp) and BOTH caused an out_of_memory crash on
+; real hardware (LispBM heap cells exhausted, surviving a full cold
+; power-cycle) - so the actual root cause is still unidentified and
+; isn't specific to either implementation. Reverted to this known-good
+; v0.1.32 behavior per explicit request rather than keep debugging on
+; hardware. Re-investigate from scratch before trying again: check
+; whether an unrelated change in the same 0.1.34+ range (protocol/
+; storage layout growth, EEPROM field additions) is the real cause
+; before touching the brake math again.
 (defun control-loop ()
     (loopwhile t
         (progn
@@ -50,17 +63,9 @@
             (setq live-brake (thr-brake-read))
             (setq live-duty (get-duty))
             (setq live-erpm (get-rpm))
-            ; The direct brake channel was a straight 1:1 lever-position
-            ; -> current-rel mapping, which felt abrupt/violent on real
-            ; hardware. brake-curve-apply (throttle.lisp) reimplements
-            ; the same Linear/Natural/Exponential + curve-constant math
-            ; as VESC Tool's own ADC/PPM throttle curve setting, in pure
-            ; LispBM - calling the native throttle-curve extension here
-            ; instead caused an out_of_memory crash on real hardware, so
-            ; this avoids that extension entirely.
             (setq live-cur-rel
                 (if (> live-brake 0.0)
-                    (- (brake-curve-apply live-brake cfg-brake-curve-k cfg-brake-curve-mode))
+                    (- live-brake)
                     (map-lookup live-throttle (clamp01 (abs live-duty)))))
             (set-current-rel live-cur-rel)
             (timeout-reset)
@@ -103,7 +108,7 @@
     (looprange r 0 map-thr-n (send-map-row r)))
 
 (defun send-cfg-echo ()
-    (let ((b (array-create 30)))
+    (let ((b (array-create 27)))
     (progn
         (bufset-u8  b 0  pkt-cfg-echo)
         (bufset-u8  b 1  cfg-preset)
@@ -122,8 +127,6 @@
         (bufset-i16 b 22 (fx-enc thr-cfg-deadband))
         (bufset-i16 b 24 (fx-enc thr-cfg-filter))
         (bufset-u8  b 26 thr-cfg-brake-mode)
-        (bufset-u8  b 27 cfg-brake-curve-mode)
-        (bufset-i16 b 28 (fx-enc cfg-brake-curve-k))
         (proto-send b)
     )))
 
@@ -172,8 +175,6 @@
                 (setq thr-cfg-deadband (fx-dec (bufget-i16 data 7)))
                 (setq thr-cfg-filter (fx-dec (bufget-i16 data 9)))
                 (setq thr-cfg-brake-mode (bufget-u8 data 11))
-                (setq cfg-brake-curve-mode (bufget-u8 data 12))
-                (setq cfg-brake-curve-k (fx-dec (bufget-i16 data 13)))
                 (proto-send-status 0)))
 
         ((= cmd pkt-set-test-thr)
