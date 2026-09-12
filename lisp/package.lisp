@@ -51,16 +51,17 @@
             (setq live-duty (get-duty))
             (setq live-erpm (get-rpm))
             ; The direct brake channel was a straight 1:1 lever-position
-            ; -> current-rel mapping (no curve at all), which is what
-            ; made it feel abrupt/violent on real hardware. Reuse the
-            ; same "Regen curve" shaping already applied to the map's
-            ; own overrun/engine-braking (see thermal-cell in map.lisp)
-            ; so the brake lever ramps in progressively instead of
-            ; jumping straight to a proportional current the instant it
-            ; leaves the deadband.
+            ; -> current-rel mapping, which felt abrupt/violent on real
+            ; hardware. throttle-curve is the same native extension the
+            ; stock ADC/PPM/VESC Remote apps use for their own throttle
+            ; curve setting - reusing it here (brake side only, accel
+            ; constant unused since the value passed is always <= 0)
+            ; means the same familiar Linear/Natural/Exponential + curve
+            ; constant control as the rest of VESC Tool, not a bespoke
+            ; formula.
             (setq live-cur-rel
                 (if (> live-brake 0.0)
-                    (- (pow live-brake (+ 1.0 cfg-regen-curve)))
+                    (throttle-curve (- live-brake) 0.0 cfg-brake-curve-k cfg-brake-curve-mode)
                     (map-lookup live-throttle (clamp01 (abs live-duty)))))
             (set-current-rel live-cur-rel)
             (timeout-reset)
@@ -103,7 +104,7 @@
     (looprange r 0 map-thr-n (send-map-row r)))
 
 (defun send-cfg-echo ()
-    (let ((b (array-create 27)))
+    (let ((b (array-create 30)))
     (progn
         (bufset-u8  b 0  pkt-cfg-echo)
         (bufset-u8  b 1  cfg-preset)
@@ -122,6 +123,8 @@
         (bufset-i16 b 22 (fx-enc thr-cfg-deadband))
         (bufset-i16 b 24 (fx-enc thr-cfg-filter))
         (bufset-u8  b 26 thr-cfg-brake-mode)
+        (bufset-u8  b 27 cfg-brake-curve-mode)
+        (bufset-i16 b 28 (fx-enc cfg-brake-curve-k))
         (proto-send b)
     )))
 
@@ -170,6 +173,8 @@
                 (setq thr-cfg-deadband (fx-dec (bufget-i16 data 7)))
                 (setq thr-cfg-filter (fx-dec (bufget-i16 data 9)))
                 (setq thr-cfg-brake-mode (bufget-u8 data 11))
+                (setq cfg-brake-curve-mode (bufget-u8 data 12))
+                (setq cfg-brake-curve-k (fx-dec (bufget-i16 data 13)))
                 (proto-send-status 0)))
 
         ((= cmd pkt-set-test-thr)
