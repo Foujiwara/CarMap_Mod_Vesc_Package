@@ -29,7 +29,7 @@ Item {
     anchors.fill: parent
     // Bumped on every edit - shown in the header as "build N" so a
     // stale/cached install is obvious at a glance instead of ambiguous.
-    property int buildMarker: 33
+    property int buildMarker: 34
     // Desktop and phone hosts need genuinely different sizing rules, not
     // one compromise value - a cap small enough to avoid overflowing a
     // phone screen leaves desktop far too small, and anything generous
@@ -97,6 +97,11 @@ Item {
     property real thrDeadband: 0.02
     property real thrFilter: 1.0
     property int thrBrakeMode: 0 // independent ADC2 brake channel
+    // Shape applied to the direct brake reading via the native
+    // throttle-curve LispBM extension - the same one the stock ADC/PPM/
+    // VESC Remote apps use for their own throttle curve setting.
+    property int cfgBrakeCurveMode: 1 // 0=Exponential 1=Natural 2=Polynomial
+    property real cfgBrakeCurveK: 0.0 // -1..1, 0 = no shaping (linear)
 
     function initMapData() {
         var a = []
@@ -160,6 +165,8 @@ Item {
         b = b.concat(i16Bytes(fxEnc(thrDeadband)))
         b = b.concat(i16Bytes(fxEnc(thrFilter)))
         b.push(thrBrakeMode & 0xff)
+        b.push(cfgBrakeCurveMode & 0xff)
+        b = b.concat(i16Bytes(fxEnc(cfgBrakeCurveK)))
         sendPacket(b)
     }
     function sendSave()  { sendPacket([cmdSave]) }
@@ -216,6 +223,8 @@ Item {
             thrDeadband = fxDec(view.getInt16(22, false))
             thrFilter = fxDec(view.getInt16(24, false))
             thrBrakeMode = view.getUint8(26)
+            cfgBrakeCurveMode = view.getUint8(27)
+            cfgBrakeCurveK = fxDec(view.getInt16(28, false))
         }
     }
 
@@ -1282,8 +1291,34 @@ Item {
                     }
                     Label {
                         visible: thrSource === 0 && thrBrakeMode !== 0
-                        text: "Either mode overrides the map with a direct, proportional negative current-rel whenever the brake side is above its deadband."
+                        text: "Either mode overrides the map with a direct current-rel whenever the brake side is above its deadband, shaped by the curve below - the same Linear/Natural/Exponential + constant control the stock ADC/PPM/VESC Remote apps use for their own throttle curve."
                         color: "#9bd"; wrapMode: Text.WordWrap; Layout.fillWidth: true; font.pixelSize: 16
+                    }
+                    ColumnLayout {
+                        visible: thrSource === 0 && thrBrakeMode !== 0
+                        Layout.fillWidth: true
+                        spacing: 2
+                        Label { text: "Brake curve"; color: "#ccc" }
+                        ComboBox {
+                            Layout.fillWidth: true
+                            model: ["Exponential", "Natural", "Polynomial"]
+                            currentIndex: cfgBrakeCurveMode
+                            onActivated: (idx) => { cfgBrakeCurveMode = idx; sendSetThrottle() }
+                        }
+                        RowLayout { Layout.fillWidth: true
+                            Label { text: "Curve constant"; color: "#ccc"; Layout.fillWidth: true; elide: Text.ElideRight }
+                            Label { text: cfgBrakeCurveK.toFixed(2); color: "#fff" }
+                        }
+                        Slider {
+                            Layout.fillWidth: true
+                            from: -1.0; to: 1.0
+                            value: cfgBrakeCurveK
+                            onMoved: { cfgBrakeCurveK = value; sendSetThrottle() }
+                        }
+                        Label {
+                            text: "Negative = gentle start, aggressive near full lever. Positive = the opposite. 0 = linear."
+                            color: "#777"; wrapMode: Text.WordWrap; Layout.fillWidth: true; font.pixelSize: 16
+                        }
                     }
 
                     // No ADC/PPM/UART hardware wired up yet? Pick "Test

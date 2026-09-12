@@ -6,7 +6,7 @@
 ;   1   throttle source (i32)
 ;   2   throttle min (f32)
 ;   3   throttle max (f32)
-;   4   invert(bit0) | deadband*1000 (bits 8..31) (i32)
+;   4   invert(bit0) | brake_curve_mode(bits 1..2) | deadband*1000 (bits 8..31) (i32)
 ;   5   throttle filter alpha (f32)
 ;   6   preset id (i32)
 ;   7   torque response (f32)
@@ -20,6 +20,9 @@
 ;   15..125  map cells, 4 int8 (offset +128, i.e. -100..100 -> 0..255-ish) packed per i32
 ;            111 slots * 4 = 444 >= 441 cells
 ;   126 brake mode (i32, 0=off 1=dual-channel ADC2 2=bidirectional ADC1)
+;   127 brake curve constant (f32, -1..1, see throttle-curve in the
+;       LispBM reference - same native extension the stock ADC/PPM/VESC
+;       Remote apps use for their own throttle curve setting)
 
 (define eeprom-magic 20260911)
 (define eeprom-map-base 15)
@@ -40,7 +43,7 @@
         (eeprom-store-i 1 thr-cfg-source)
         (eeprom-store-f 2 thr-cfg-min)
         (eeprom-store-f 3 thr-cfg-max)
-        (eeprom-store-i 4 (bitwise-or thr-cfg-invert
+        (eeprom-store-i 4 (bitwise-or (bitwise-or thr-cfg-invert (shl cfg-brake-curve-mode 1))
                                        (shl (to-i (* thr-cfg-deadband 1000.0)) 8)))
         (eeprom-store-f 5 thr-cfg-filter)
         (eeprom-store-i 6 cfg-preset)
@@ -53,6 +56,7 @@
         (eeprom-store-f 13 cfg-overrun-regen)
         (eeprom-store-i 14 cfg-regen-curve)
         (eeprom-store-i 126 thr-cfg-brake-mode)
+        (eeprom-store-f 127 cfg-brake-curve-k)
         (looprange s 0 eeprom-map-slots
             (let ((c0 (+ (* s 4) 0)) (c1 (+ (* s 4) 1))
                   (c2 (+ (* s 4) 2)) (c3 (+ (* s 4) 3)))
@@ -86,6 +90,7 @@
             (define thr-cfg-max (eeprom-read-f 3))
             (let ((packed (eeprom-read-i 4)))
                 (define thr-cfg-invert (bitwise-and packed 1))
+                (define cfg-brake-curve-mode (bitwise-and (shr packed 1) 3))
                 (define thr-cfg-deadband (/ (to-float (shr packed 8)) 1000.0)))
             (define thr-cfg-filter (eeprom-read-f 5))
             (define cfg-preset (eeprom-read-i 6))
@@ -98,6 +103,11 @@
             (define cfg-overrun-regen (eeprom-read-f 13))
             (define cfg-regen-curve (eeprom-read-i 14))
             (define thr-cfg-brake-mode (eeprom-read-i 126))
+            ; eeprom-read-f returns nil if this address was never written
+            ; (e.g. upgrading from a save made before this field existed)
+            ; - fall back to a sane default instead of storing nil.
+            (let ((k (eeprom-read-f 127)))
+                (define cfg-brake-curve-k (if k k 0.0)))
             (looprange s 0 eeprom-map-slots
                 (let ((packed (eeprom-read-i (+ eeprom-map-base s))))
                 (progn
@@ -133,6 +143,8 @@
                                      ; throttle.lisp, filtering felt like
                                      ; input latency on real hardware
         (define thr-cfg-brake-mode 0)
+        (define cfg-brake-curve-mode 1) ; 0=Exponential 1=Natural 2=Polynomial
+        (define cfg-brake-curve-k 0.0)  ; 0 = no shaping (linear)
         (gen-thermal-map cfg-torque-resp cfg-speed-coupling cfg-trans-width
                           cfg-trans-shape cfg-high-hold cfg-engine-brake
                           cfg-overrun-regen cfg-regen-curve)

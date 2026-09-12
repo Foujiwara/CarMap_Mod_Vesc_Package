@@ -17,9 +17,14 @@
 ;                        trans_width:i16(x1000) trans_shape:u8 high_hold:i16(x1000)
 ;                        engine_brake:i16(x1000) overrun_regen:i16(x1000) regen_curve:u8]
 ;   0x04 SET_THROTTLE  [0x04 source:u8 invert:u8 min:i16(x1000) max:i16(x1000)
-;                        deadband:i16(x1000) filter:i16(x1000) brake_enable:u8]
-;        brake_enable: independent brake channel on ADC2 (channel 1),
-;        only meaningful when source == ADC. See docs/architecture.md.
+;                        deadband:i16(x1000) filter:i16(x1000) brake_mode:u8
+;                        brake_curve_mode:u8 brake_curve_k:i16(x1000)]
+;        brake_mode: 0=off 1=dual-channel ADC2 2=bidirectional ADC1, only
+;        meaningful when source == ADC. See docs/architecture.md.
+;        brake_curve_mode/brake_curve_k: shape applied to the direct
+;        brake reading via the native throttle-curve extension (the same
+;        one the stock ADC/PPM/VESC Remote apps use) - 0=Exponential
+;        1=Natural 2=Polynomial, k in -1..1.
 ;   0x05 CMD_SAVE      [0x05]
 ;   0x06 CMD_LOAD      [0x06]
 ;   0x07 CMD_RESET     [0x07]
@@ -34,8 +39,7 @@
 ;   0x80 LIVE     [0x80 throttle:i16 duty:i16 erpm:i32 cur_rel:i16 cur_a:i16(x100) brake:i16]
 ;   0x81 MAP_ROW  [0x81 row_idx:u8 value0:i16 ... value20:i16]
 ;   0x82 STATUS   [0x82 code:u8]         ; 0 = ok/ack, 1 = saved, 2 = loaded, 3 = reset
-;   0x83 CFG_ECHO [0x83 ... mirrors 0x03/0x04 payloads concatenated, plus
-;                   brake_enable:u8 at the end ...]
+;   0x83 CFG_ECHO [0x83 ... mirrors the 0x03 then 0x04 payloads, concatenated]
 
 (define pkt-set-cell    0x01)
 (define pkt-set-map-row 0x02)
