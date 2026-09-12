@@ -4,10 +4,10 @@
 ; Layout (see docs/map_format.md for the authoritative version):
 ;   0   magic/version (i32)              - EEPROM-MAGIC when valid data present
 ;   1   throttle source (i32)
-;   2   throttle min (f32)
-;   3   throttle max (f32)
-;   4   invert(bit0) | deadband*1000 (bits 8..31) (i32)
-;   5   throttle filter alpha (f32)
+;   2   throttle min, fp-scale (i32)     - see util.lisp; was f32 before
+;   3   throttle max, fp-scale (i32)     ; the fixed-point rewrite, bumped
+;   4   invert(bit0) | deadband fp-scale (bits 8..31) (i32) ; eeprom-magic
+;   5   throttle filter alpha, fp-scale (i32) ; below to force a fresh reset
 ;   6   preset id (i32)
 ;   7   torque response (f32)
 ;   8   speed coupling (f32)
@@ -21,7 +21,16 @@
 ;            111 slots * 4 = 444 >= 441 cells
 ;   126 brake mode (i32, 0=off 1=dual-channel ADC2 2=bidirectional ADC1)
 
-(define eeprom-magic 20260911)
+; Bumped from 20260911: addresses 2/3/4/5 changed from f32 (IEEE-754
+; bit pattern) to plain fp-scale i32 (throttle.lisp's fixed-point
+; rewrite) - a different byte representation entirely, so a device with
+; an old save must NOT have it reinterpreted as the new format (it
+; would decode to nonsense min/max/deadband/filter values). Bumping the
+; magic makes storage-load correctly treat any pre-existing save as "no
+; valid data" and fall through to storage-reset instead - a one-time
+; reset of calibration/map/brake-mode back to defaults on first boot
+; with this version, which is far safer than silently misreading bytes.
+(define eeprom-magic 20260912)
 (define eeprom-map-base 15)
 (define eeprom-map-slots 111)
 
@@ -39,11 +48,13 @@
 (defun storage-save ()
     (progn
         (eeprom-store-i 1 thr-cfg-source)
-        (eeprom-store-f 2 thr-cfg-min)
-        (eeprom-store-f 3 thr-cfg-max)
-        (eeprom-store-i 4 (bitwise-or thr-cfg-invert
-                                       (shl (to-i (* thr-cfg-deadband 1000.0)) 8)))
-        (eeprom-store-f 5 thr-cfg-filter)
+        ; thr-cfg-min/max/deadband/filter are already fp-scale integers
+        ; (throttle.lisp) - stored with eeprom-store-i, not -f, and no
+        ; *1000 scaling here since they're already at that scale.
+        (eeprom-store-i 2 thr-cfg-min)
+        (eeprom-store-i 3 thr-cfg-max)
+        (eeprom-store-i 4 (bitwise-or thr-cfg-invert (shl thr-cfg-deadband 8)))
+        (eeprom-store-i 5 thr-cfg-filter)
         (eeprom-store-i 6 cfg-preset)
         (eeprom-store-f 7 cfg-torque-resp)
         (eeprom-store-f 8 cfg-speed-coupling)
@@ -87,12 +98,12 @@
     (if (eq (eeprom-read-i 0) eeprom-magic)
         (progn
             (define thr-cfg-source (eeprom-read-i 1))
-            (define thr-cfg-min (eeprom-read-f 2))
-            (define thr-cfg-max (eeprom-read-f 3))
+            (define thr-cfg-min (eeprom-read-i 2))
+            (define thr-cfg-max (eeprom-read-i 3))
             (let ((packed (eeprom-read-i 4)))
                 (define thr-cfg-invert (bitwise-and packed 1))
-                (define thr-cfg-deadband (/ (to-float (shr packed 8)) 1000.0)))
-            (define thr-cfg-filter (eeprom-read-f 5))
+                (define thr-cfg-deadband (shr packed 8)))
+            (define thr-cfg-filter (eeprom-read-i 5))
             (define cfg-preset (eeprom-read-i 6))
             (define cfg-torque-resp (eeprom-read-f 7))
             (define cfg-speed-coupling (eeprom-read-f 8))
@@ -131,10 +142,10 @@
         (define cfg-regen-curve 1)
         (define thr-cfg-source thr-src-adc)
         (define thr-cfg-invert 0)
-        (define thr-cfg-min 0.02)
-        (define thr-cfg-max 0.98)
-        (define thr-cfg-deadband 0.02)
-        (define thr-cfg-filter 1.0) ; no filtering by default - see
+        (define thr-cfg-min 20)     ; 0.02, fp-scale (throttle.lisp)
+        (define thr-cfg-max 980)    ; 0.98
+        (define thr-cfg-deadband 20) ; 0.02
+        (define thr-cfg-filter 1000) ; no filtering by default - see
                                      ; throttle.lisp, filtering felt like
                                      ; input latency on real hardware
         (define thr-cfg-brake-mode 0)

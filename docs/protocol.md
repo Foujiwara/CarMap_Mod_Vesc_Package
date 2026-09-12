@@ -13,6 +13,21 @@ a signed 16-bit integer scaled by 1000 (`fx-enc`/`fx-dec` in
 `lisp/protocol.lisp`, `fxEnc`/`fxDec` in `ui.qml.in`). This keeps packets
 small without sending raw floats over the wire.
 
+For the throttle-calibration fields (`min`/`max`/`deadband`/`filter` in
+`SET_THROTTLE`/`CFG_ECHO`), the map cell fields (`SET_CELL`/
+`SET_MAP_ROW`/`MAP_ROW`), and the throttle/brake/current-rel fields in
+`LIVE`, this x1000 scale is *also* the LispBM side's own internal
+representation now (`fp-scale` in `util.lisp`) - not just a wire
+encoding. `fx-enc`/`fx-dec` are skipped entirely for those fields
+(the raw wire `i16` is read/written directly); they're still used for
+the map-generator parameters (`torque_resp`, `speed_coupling`, etc.),
+which stay real floats internally since `gen-thermal-map` needs `pow`.
+See `util.lisp`'s `fp-scale` comment for why: on this 32-bit target,
+every float (and even `to-i32`) allocates a heap cell, confirmed by
+reading lispBM's own `heap.c`, while plain integer arithmetic does
+not - real hardware showed heap usage near saturation from the 200 Hz
+control loop's own float math before this change.
+
 ## QML -> Lisp
 
 | id | name | payload |

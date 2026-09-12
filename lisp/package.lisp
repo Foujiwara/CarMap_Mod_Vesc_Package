@@ -26,11 +26,22 @@
 
 ; Cache the last live values so the LIVE packet and the LiveView in QML
 ; always have something sane to show even before the first loop tick.
-(define live-throttle 0.0)
+; live-throttle/live-cur-rel/live-brake are fp-scale integers (see
+; util.lisp) - they match the wire format exactly, so telemetry sends
+; them straight through with no fx-enc conversion. live-duty/live-erpm
+; stay real floats: get-duty/get-rpm are native extensions that always
+; return one, so there is nothing to gain converting them any earlier
+; than telemetry-loop already has to (fx-enc).
+(define live-throttle 0)
 (define live-duty 0.0)
 (define live-erpm 0.0)
-(define live-cur-rel 0.0)
-(define live-brake 0.0)
+(define live-cur-rel 0)
+(define live-brake 0)
+
+; ADC bidirectional-mode calibration is cached (see throttle.lisp) since
+; it almost never changes while the package runs - refresh it once here
+; at boot, same as the rest of the config.
+(thr-adc-cal-refresh)
 
 ; ---------------------------------------------------------------------
 ; Control loop: read inputs, look up the map, apply the current-rel
@@ -56,6 +67,18 @@
 ; whether an unrelated change in the same 0.1.34+ range (protocol/
 ; storage layout growth, EEPROM field additions) is the real cause
 ; before touching the brake math again.
+;
+; live-throttle/live-brake/live-cur-rel are fp-scale integers (see
+; util.lisp) all the way through this loop - thr-read, thr-brake-read
+; and map-lookup all stay in LispBM's zero-heap-cost integer type now.
+; get-duty is a native extension and always returns a real float; it is
+; converted to fp-scale (to-fp) right where it's used and nowhere else.
+; set-current-rel is a native extension that requires a real float
+; argument, so live-cur-rel is converted back with fp-to-f - the one
+; unavoidable float (one heap cell) per tick, instead of the ~15-20 a
+; fully float control-loop was creating and immediately having to
+; garbage-collect every single tick (confirmed via lispBM's heap.c:
+; every float allocates a heap cons cell, plain integers do not).
 (defun control-loop ()
     (loopwhile t
         (progn
@@ -64,18 +87,18 @@
             (setq live-duty (get-duty))
             (setq live-erpm (get-rpm))
             (setq live-cur-rel
-                (if (> live-brake 0.0)
+                (if (> live-brake 0)
                     (- live-brake)
-                    (map-lookup live-throttle (clamp01 (abs live-duty)))))
-            (set-current-rel live-cur-rel)
+                    (map-lookup live-throttle (clamp-f (to-fp (abs live-duty)) 0 fp-scale))))
+            (set-current-rel (fp-to-f live-cur-rel))
             (timeout-reset)
             ; 200 Hz instead of the original 100 Hz: halves the loop's own
             ; contribution to input-to-current latency. Safe to tighten
             ; now that map-lookup/thr-normalize/thr-read (throttle.lisp,
             ; map.lisp) were flattened from nested lets to single lets
-            ; each - fewer environment frames allocated per tick than the
-            ; 100 Hz version had, so this isn't a net increase in heap
-            ; pressure per second despite running twice as often.
+            ; each, and now run in fixed-point integers instead of
+            ; floats - far less heap pressure per tick than the 100 Hz,
+            ; all-float version had.
             (sleep 0.005) ; ~200 Hz control loop
         )))
 
@@ -89,12 +112,17 @@
             (let ((b (array-create 15)))
             (progn
                 (bufset-u8 b 0 pkt-live)
-                (bufset-i16 b 1 (fx-enc live-throttle))
+                ; live-throttle/live-cur-rel/live-brake are already
+                ; fp-scale integers (see util.lisp) - identical to the
+                ; wire's own x1000 fixed point, so no fx-enc needed.
+                ; live-duty is still a real float (get-duty), so it's
+                ; the only one that needs it.
+                (bufset-i16 b 1 live-throttle)
                 (bufset-i16 b 3 (fx-enc live-duty))
                 (bufset-i32 b 5 (to-i live-erpm))
-                (bufset-i16 b 9 (fx-enc live-cur-rel))
+                (bufset-i16 b 9 live-cur-rel)
                 (bufset-i16 b 11 (to-i (* (get-current) 100.0)))
-                (bufset-i16 b 13 (fx-enc live-brake))
+                (bufset-i16 b 13 live-brake)
                 (proto-send b)))
             (sleep 0.05) ; 20 Hz, plenty for a smooth UI dot/needle
         )))
@@ -106,8 +134,10 @@
     (progn
         (bufset-u8 b 0 pkt-map-row)
         (bufset-u8 b 1 row-i)
+        ; map-get-cell is already fp-scale (map.lisp) - matches the wire
+        ; format exactly, no fx-enc needed.
         (looprange d 0 map-duty-n
-            (bufset-i16 b (+ 2 (* d 2)) (fx-enc (map-get-cell row-i d))))
+            (bufset-i16 b (+ 2 (* d 2)) (map-get-cell row-i d)))
         (proto-send b)
     )))
 
@@ -129,10 +159,14 @@
         (bufset-u8  b 15 cfg-regen-curve)
         (bufset-u8  b 16 thr-cfg-source)
         (bufset-u8  b 17 thr-cfg-invert)
-        (bufset-i16 b 18 (fx-enc thr-cfg-min))
-        (bufset-i16 b 20 (fx-enc thr-cfg-max))
-        (bufset-i16 b 22 (fx-enc thr-cfg-deadband))
-        (bufset-i16 b 24 (fx-enc thr-cfg-filter))
+        ; thr-cfg-min/max/deadband/filter are already fp-scale integers
+        ; (throttle.lisp) - matches the wire format exactly, no fx-enc
+        ; needed (unlike cfg-torque-resp etc. above, which stay float
+        ; since only gen-thermal-map's pow()-based math uses them).
+        (bufset-i16 b 18 thr-cfg-min)
+        (bufset-i16 b 20 thr-cfg-max)
+        (bufset-i16 b 22 thr-cfg-deadband)
+        (bufset-i16 b 24 thr-cfg-filter)
         (bufset-u8  b 26 thr-cfg-brake-mode)
         (proto-send b)
     )))
@@ -140,17 +174,19 @@
 (defun handle-packet (data)
     (let ((cmd (bufget-u8 data 0)))
     (cond
+        ; map-set-cell expects fp-scale (map.lisp) - identical to the
+        ; wire's own x1000 fixed point, so the raw i16 is used directly.
         ((= cmd pkt-set-cell)
             (progn
                 (map-set-cell (bufget-u8 data 1) (bufget-u8 data 2)
-                               (fx-dec (bufget-i16 data 3)))
+                               (bufget-i16 data 3))
                 (proto-send-status 0)))
 
         ((= cmd pkt-set-map-row)
             (let ((row (bufget-u8 data 1)))
             (progn
                 (looprange d 0 map-duty-n
-                    (map-set-cell row d (fx-dec (bufget-i16 data (+ 2 (* d 2))))))
+                    (map-set-cell row d (bufget-i16 data (+ 2 (* d 2)))))
                 (proto-send-status 0))))
 
         ((= cmd pkt-set-config)
@@ -173,20 +209,23 @@
                     nil)
                 (proto-send-status 0)))
 
+        ; thr-cfg-min/max/deadband/filter and thr-test-value are all
+        ; fp-scale integers now (throttle.lisp) - identical to the
+        ; wire's own x1000 fixed point, so the raw i16 is used directly.
         ((= cmd pkt-set-thr)
             (progn
                 (setq thr-cfg-source (bufget-u8 data 1))
                 (setq thr-cfg-invert (bufget-u8 data 2))
-                (setq thr-cfg-min (fx-dec (bufget-i16 data 3)))
-                (setq thr-cfg-max (fx-dec (bufget-i16 data 5)))
-                (setq thr-cfg-deadband (fx-dec (bufget-i16 data 7)))
-                (setq thr-cfg-filter (fx-dec (bufget-i16 data 9)))
+                (setq thr-cfg-min (bufget-i16 data 3))
+                (setq thr-cfg-max (bufget-i16 data 5))
+                (setq thr-cfg-deadband (bufget-i16 data 7))
+                (setq thr-cfg-filter (bufget-i16 data 9))
                 (setq thr-cfg-brake-mode (bufget-u8 data 11))
                 (proto-send-status 0)))
 
         ((= cmd pkt-set-test-thr)
             (progn
-                (setq thr-test-value (fx-dec (bufget-i16 data 1)))
+                (setq thr-test-value (bufget-i16 data 1))
                 (proto-send-status 0)))
 
         ((= cmd pkt-cmd-save) (progn (storage-save) (proto-send-status 1)))

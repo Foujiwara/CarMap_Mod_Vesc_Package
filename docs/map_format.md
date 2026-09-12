@@ -31,18 +31,27 @@ per cell, so index and byte offset are the same number).
 
 ## Bilinear interpolation
 
-Given normalized `throttle01` (0..1) and `duty01` (0..1, taken from
-`abs(get-duty)` - see note below):
+Given `throttle01` and `duty01` in **fp-scale** (0..1000, see
+`util.lisp` - not 0.0..1.0 float; `duty01` is `abs(get-duty)` converted
+to fp-scale by the caller, see note below). All-integer arithmetic
+(confirmed cheaper on this target: every float allocates a heap cell,
+plain integers don't - see `util.lisp`'s `fp-scale` comment):
 
 ```
-tf = throttle01 * 20      ; 20 = map-thr-n - 1
+tf = throttle01 * 20      ; 20 = map-thr-n - 1, still fp-scale
 df = duty01 * 20
-t0 = floor(tf), t1 = min(t0+1, 20), tw = tf - t0
-d0 = floor(df), d1 = min(d0+1, 20), dw = df - d0
-v0 = lerp(cell[t0,d0], cell[t0,d1], dw)
-v1 = lerp(cell[t1,d0], cell[t1,d1], dw)
-result = lerp(v0, v1, tw)
+t0 = tf / 1000, t1 = min(t0+1, 20), tw = tf - t0*1000
+d0 = df / 1000, d1 = min(d0+1, 20), dw = df - d0*1000
+v0 = cell[t0,d0] + (cell[t0,d1] - cell[t0,d0]) * dw / 1000
+v1 = cell[t1,d0] + (cell[t1,d1] - cell[t1,d0]) * dw / 1000
+result = v0 + (v1 - v0) * tw / 1000      ; fp-scale, -1000..1000
 ```
+
+This used to be float arithmetic (`tf`/`df` in 0.0..20.0, weights
+0.0..1.0, `lerp(a,b,w) = a + (b-a)*w`); the integer version above is
+mathematically the same lerp, just with the 0..1 weight expressed as an
+integer 0..1000 and an explicit `/1000` where the float version's
+multiply by a 0..1 weight did the scaling implicitly.
 
 `abs(get-duty)` note: the map only has a duty axis 0..100%, i.e. it treats
 forward and reverse rotation symmetrically. This matches how the requested
@@ -100,6 +109,15 @@ for 441 raw floats, so:
   ADC2, 2=bidirectional single-channel ADC1), 127 is
   reserved for future use. See the header
   comment in `storage.lisp` for the exact field order.
+- Addresses 2/3/4/5 (throttle min/max/deadband/filter) are `eeprom-store-i`
+  now, not `-f`: those four fields became fp-scale integers (see
+  "Bilinear interpolation" above and `util.lisp`), so they're stored as
+  plain integers instead of an IEEE-754 float bit pattern. `eeprom-magic`
+  was bumped for this reason - an old save's bytes for these 4 fields
+  would decode to nonsense if read back under the new format, so the
+  magic change makes `storage-load` correctly treat any pre-existing
+  save as invalid and fall through to `storage-reset` instead, a
+  one-time reset to defaults rather than silently misreading bytes.
 
 `storage-save` writes all of the above then calls `conf-store` once so the
 eeprom write is committed to flash the same way the rest of the firmware

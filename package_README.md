@@ -20,6 +20,14 @@ voltage) remain fully in charge.
   a Current Relative value every control loop iteration (~200 Hz).
 - Sends that value with `set-current-rel`.
 
+> **Updating from a version before 0.1.41?** This update changed how
+> throttle min/max/deadband/filter are stored internally (switched from
+> floats to fixed-point integers to cut memory use - see
+> `docs/protocol.md`), which required a storage format change. Your
+> saved calibration, brake mode and map will reset to defaults
+> (Thermal Street) the first time this version boots - redo steps 3-5
+> below once after updating.
+
 ## Setup (one-time, in VESC Tool)
 
 1. In **App Settings**, keep the app for your input (ADC / PPM / UART)

@@ -34,34 +34,51 @@
     (bufset-i8 map-buf (map-idx thr-i duty-i) (cell-to-i8 val)))
 
 ; ---- bilinear interpolation ----------------------------------------------
-; thr01, duty01 in [0, 1]. duty is expected to already be abs(get-duty).
+; thr01, duty01 in fp-scale (0..1000, see util.lisp) - integer, not
+; float. duty is expected to already be abs(get-duty), converted to
+; fp-scale by the caller (control-loop). Every operation here
+; (add/sub/mul/div/compare between two plain integers) stays in
+; LispBM's zero-cost inline integer type instead of boxing a float on
+; the heap for every intermediate result, which is what this did before
+; and was the confirmed cause of high heap usage on real hardware at
+; 200 Hz (see util.lisp's fp-scale comment for the lispBM heap.c
+; evidence). Returns fp-scale too (-1000..1000): the caller converts to
+; a real float only once, right before set-current-rel, the one place a
+; float genuinely can't be avoided.
 ;
 ; A single `let` in LispBM allows mutually-referencing bindings (see the
 ; "let" chapter of the LispBM reference), so this is one environment
-; frame instead of five nested ones - called at up to 100+ Hz from
-; control-loop, so cutting the per-call allocation matters more here
-; than readability alone would justify.
+; frame instead of five nested ones.
 (defun map-lookup (thr01 duty01)
-    (let ((tf (* (clamp01 thr01) (- map-thr-n 1)))
-          (df (* (clamp01 duty01) (- map-duty-n 1)))
-          (t0 (to-i tf))
-          (d0 (to-i df))
+    (let ((tf (* (clamp-f thr01 0 fp-scale) (- map-thr-n 1)))
+          (df (* (clamp-f duty01 0 fp-scale) (- map-duty-n 1)))
+          (t0 (/ tf fp-scale))
+          (d0 (/ df fp-scale))
           (t1 (if (< t0 (- map-thr-n 1)) (+ t0 1) t0))
           (d1 (if (< d0 (- map-duty-n 1)) (+ d0 1) d0))
-          (tw (- tf (to-float t0)))
-          (dw (- df (to-float d0)))
+          (tw (- tf (* t0 fp-scale)))
+          (dw (- df (* d0 fp-scale)))
           (v00 (map-get-cell t0 d0))
           (v01 (map-get-cell t0 d1))
           (v10 (map-get-cell t1 d0))
           (v11 (map-get-cell t1 d1))
-          (v0 (+ (* v00 (- 1.0 dw)) (* v01 dw)))
-          (v1 (+ (* v10 (- 1.0 dw)) (* v11 dw))))
-    (+ (* v0 (- 1.0 tw)) (* v1 tw))
+          (v0 (+ v00 (/ (* (- v01 v00) dw) fp-scale)))
+          (v1 (+ v10 (/ (* (- v11 v10) dw) fp-scale))))
+    (+ v0 (/ (* (- v1 v0) tw) fp-scale))
     ))
 
 ; ---- default map generator (Thermal Street) -------------------------------
 ; Mirrors the QML configurator formulas (see docs/map_format.md) so the
 ; package behaves sanely even before VESC Tool has ever connected.
+;
+; Deliberately still float internally (thermal-peak/thermal-cell below
+; use `pow`, which has no cheap fixed-point equivalent worth the risk
+; of changing the map's actual shape) - unlike map-lookup, this only
+; runs once at boot or when a preset/parameter changes, not every
+; control-loop tick, so its float cost is a one-time transient burst,
+; not a continuous per-tick tax. map-set-cell is the only place the
+; float result crosses into the integer/fp-scale domain the rest of
+; the map (and the hot path) now lives in - to-fp does that conversion.
 (defun gen-thermal-map (torque-resp speed-coupling trans-width trans-shape
                          high-hold engine-brake overrun-regen regen-curve)
     (looprange ti 0 map-thr-n
@@ -71,8 +88,8 @@
         (looprange di 0 map-duty-n
             (let ((duty (/ (to-float di) (to-float (- map-duty-n 1)))))
             (map-set-cell ti di
-                (thermal-cell thr duty peak balance-duty trans-width
-                              trans-shape engine-brake overrun-regen regen-curve))
+                (to-fp (thermal-cell thr duty peak balance-duty trans-width
+                                      trans-shape engine-brake overrun-regen regen-curve)))
             ))
         )))
 
