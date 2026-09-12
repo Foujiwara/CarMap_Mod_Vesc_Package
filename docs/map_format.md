@@ -142,10 +142,18 @@ commanding 0 A - that still counts as "controlling", not "released",
 so **every single `storage-save` would fail to persist anything, 100%
 of the time, regardless of vehicle motion**, unless something
 temporarily stops the control loop from driving during the save.
-`storage-pause-ticks` (`storage.lisp`) is that something: `storage-save`
-sets it before touching eeprom, `control-loop` skips
-`set-current-rel`/`timeout-reset` entirely while it's nonzero (letting
-the firmware's own configured motor timeout elapse and release control
-cleanly - the same mechanism a lost RC signal relies on), and it
+
+Before assuming the fix needed to wait out the VESC's configured motor
+timeout: it doesn't. `mc_interface_release_motor_override_both`
+(called internally by every `eeprom-store-f`/`-i`, right before the
+wait) is an *explicit, immediate* release
+(`mcpwm_foc_release_motor()`), not something that depends on the
+configured timeout elapsing naturally. The only thing that can defeat
+it is this script itself immediately re-asserting `set-current-rel`
+again before the next poll notices the release - so the actual fix is
+just "don't do that for the whole save", nothing more elaborate.
+`storage-pause-ticks` (`storage.lisp`) is that: `storage-save` sets it
+before touching eeprom, `control-loop` skips
+`set-current-rel`/`timeout-reset` entirely while it's nonzero, and it
 decrements on its own every tick regardless of what `storage-save`
 does, so it can never get stuck even if `storage-save` itself errors.

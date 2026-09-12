@@ -54,19 +54,25 @@
 
 (defun storage-save ()
     (progn
-        ; Let the motor genuinely release before touching eeprom at
-        ; all: every eeprom-store-f/i call below waits up to 3s for the
-        ; FOC state to reach MC_STATE_OFF, which can't happen while
-        ; control-loop keeps issuing set-current-rel every 5ms - see
-        ; the comment there. 1000 ticks = 5s at 200 Hz, comfortably
-        ; covering both the time for the firmware's own motor timeout
-        ; to elapse AND the ~126 sequential eeprom-store calls below
-        ; (each one re-triggers its own brief release/wait internally -
-        ; confirmed in mc_interface.c - so control-loop must stay
-        ; paused for the whole save, not just the initial settle).
-        (setq storage-pause-ticks 1000)
-        (sleep 1.5) ; give the initial release time to land before the
-                    ; first eeprom-store call specifically
+        ; mc_interface_release_motor_override_both (called internally by
+        ; every eeprom-store-f/i call, confirmed in mc_interface.c) is
+        ; an EXPLICIT, IMMEDIATE release (mcpwm_foc_release_motor()) -
+        ; it does NOT wait for the VESC's configured motor timeout to
+        ; elapse naturally. The only thing that can stop it from taking
+        ; effect is *this script itself* immediately re-asserting
+        ; set-current-rel again from control-loop before the very next
+        ; eeprom-store call's poll notices the release - so the fix is
+        ; purely "stop calling set-current-rel for the whole save",
+        ; nothing more: storage-pause-ticks below makes control-loop
+        ; skip it entirely, and this brief settle sleep just gives that
+        ; a moment to take effect before the first eeprom-store call.
+        (setq storage-pause-ticks 3000) ; ~15s ceiling at 200 Hz - generous
+                                         ; safety margin, not an expected
+                                         ; duration; self-decrements in
+                                         ; control-loop regardless of
+                                         ; what happens here, so it can't
+                                         ; get stuck even on an error
+        (sleep 0.3)
         (eeprom-store-i 1 thr-cfg-source)
         ; thr-cfg-min/max/deadband/filter are already fp-scale integers
         ; (throttle.lisp) - stored with eeprom-store-i, not -f, and no
