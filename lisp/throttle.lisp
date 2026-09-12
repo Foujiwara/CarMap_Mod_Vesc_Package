@@ -70,25 +70,36 @@
 
 ; ADC bidirectional calibration cache (adc-v1-start/-center/-end from
 ; App Settings -> ADC). These almost never change while this package is
-; running, so they're read once via conf-get here instead of on every
-; single control-loop tick: fewer native calls (real CPU cost, not just
-; heap - conf-get looks up a named field in the app config struct) and
-; fewer fresh float boxes (a cached global still boxes the value once at
-; cache time, not again on every read). Cached once at boot
-; (package.lisp calls thr-adc-cal-refresh right after loading/resetting
-; storage); if you change the ADC calibration in App Settings while
-; this package is already running, reboot the VESC (or reinstall the
-; package) to pick up the new values.
+; running, so they're read once via conf-get instead of on every single
+; control-loop tick: fewer native calls (real CPU cost, not just heap -
+; conf-get looks up a named field in the app config struct) and fewer
+; fresh float boxes (a cached global still boxes the value once at
+; cache time, not again on every read).
+;
+; Lazily populated on first actual use inside the control loop
+; (thr-adc-cal-ensure, called from thr-adc-signed) rather than eagerly
+; at script boot: calling conf-get from the top-level boot sequence
+; (before any process has even been spawned) is untested timing that
+; caused a total script failure on real hardware - every previous
+; conf-get call in this file only ever happened from inside the
+; already-running control-loop process, never at boot, so this keeps
+; that same safe timing while still only paying the conf-get cost once
+; instead of every tick. If you change the ADC calibration in App
+; Settings while this package is already running, reboot the VESC (or
+; reinstall the package) to pick up the new values.
 (define thr-adc-cal-start 0.0)
 (define thr-adc-cal-center 0.0)
 (define thr-adc-cal-end 0.0)
+(define thr-adc-cal-loaded 0)
 
-(defun thr-adc-cal-refresh ()
-    (progn
-        (setq thr-adc-cal-start (conf-get 'adc-v1-start))
-        (setq thr-adc-cal-center (conf-get 'adc-v1-center))
-        (setq thr-adc-cal-end (conf-get 'adc-v1-end))
-    ))
+(defun thr-adc-cal-ensure ()
+    (if (= thr-adc-cal-loaded 0)
+        (progn
+            (setq thr-adc-cal-start (conf-get 'adc-v1-start))
+            (setq thr-adc-cal-center (conf-get 'adc-v1-center))
+            (setq thr-adc-cal-end (conf-get 'adc-v1-end))
+            (setq thr-adc-cal-loaded 1))
+        nil))
 
 ; UART throttle: a tiny 3-byte frame so noise on the line can't be mistaken
 ; for a valid reading. Frame: <0xA5> <percent 0..200, meaning 0..100.0%>
@@ -135,18 +146,20 @@
 ; fp-scale value: >0 is the accelerator side, <0 is the brake side,
 ; both already fractions of their own half of the range (no separate
 ; normalize step needed). The calibration values themselves are floats
-; (cached, not re-read every tick - see thr-adc-cal-refresh) and the
+; (cached, not re-read every tick - see thr-adc-cal-ensure) and the
 ; raw ADC voltage (get-adc) is always a float too, so this function
 ; still does float math internally - unavoidable, this is literally
 ; reading and comparing voltages - but its final result is converted to
 ; fp-scale once, right at the end, same as every other source.
 (defun thr-adc-signed ()
+    (progn
+    (thr-adc-cal-ensure)
     (let ((raw (get-adc 0)))
     (to-fp
         (if (>= raw thr-adc-cal-center)
             (clamp01 (/ (- raw thr-adc-cal-center) (max-f 0.001 (- thr-adc-cal-end thr-adc-cal-center))))
             (- (clamp01 (/ (- thr-adc-cal-center raw) (max-f 0.001 (- thr-adc-cal-center thr-adc-cal-start)))))
-        ))))
+        )))))
 
 ; Raw, source-specific, fp-scale (0..1000).
 (defun thr-read-raw ()
