@@ -51,7 +51,11 @@ brake value 0..1 is shaped by the native `throttle-curve` LispBM
 extension (`brake_curve_mode`/`brake_curve_k`) - the same one the stock
 ADC/PPM/VESC Remote apps use for their own throttle curve setting -
 before being applied directly as current-rel, bypassing the map
-entirely while the brake is above its deadband.
+entirely while the brake is above its deadband. `brake_curve_k` ranges
+-5..5, matching VESC Tool's own ADC/PPM "Throttle Expo" parameter
+(confirmed from vesc_tool's real `parameters_appconf.xml`: `minDouble`/
+`maxDouble` = -5/5, with the UI's percentage slider showing -100..100
+as a linear rescale of that -5..5 range, not the value itself).
 
 `SET_CONFIG` with `preset > 0` (1=Street, 2=Race, 3=Wet, 4=Direct Electric)
 tells the VESC to regenerate the *entire* map from

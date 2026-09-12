@@ -24,7 +24,9 @@
 ;        brake_curve_mode/brake_curve_k: shape applied to the direct
 ;        brake reading via the native throttle-curve extension (the same
 ;        one the stock ADC/PPM/VESC Remote apps use) - 0=Exponential
-;        1=Natural 2=Polynomial, k in -1..1.
+;        1=Natural 2=Polynomial, k in -5..5 (same range as VESC Tool's
+;        own ADC/PPM "Throttle Expo" parameter - verified against
+;        vesc_tool's real config XML, not assumed).
 ;   0x05 CMD_SAVE      [0x05]
 ;   0x06 CMD_LOAD      [0x06]
 ;   0x07 CMD_RESET     [0x07]

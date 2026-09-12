@@ -20,8 +20,9 @@
 ;   15..125  map cells, 4 int8 (offset +128, i.e. -100..100 -> 0..255-ish) packed per i32
 ;            111 slots * 4 = 444 >= 441 cells
 ;   126 brake mode (i32, 0=off 1=dual-channel ADC2 2=bidirectional ADC1)
-;   127 brake curve constant (f32, -1..1, see throttle-curve in the
-;       LispBM reference - same native extension the stock ADC/PPM/VESC
+;   127 brake curve constant (f32, -5..5 - same range as VESC Tool's own
+;       ADC/PPM "Throttle Expo" parameter; see throttle-curve in the
+;       LispBM reference, the same native extension the stock ADC/PPM/VESC
 ;       Remote apps use for their own throttle curve setting)
 
 (define eeprom-magic 20260911)
