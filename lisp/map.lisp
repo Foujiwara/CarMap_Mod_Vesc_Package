@@ -19,22 +19,34 @@
 ; from these two constants except the wire packet size in protocol.lisp
 ; (21 values/row), which should be updated to match DUTY-N if you resize.
 ;
-; NOT wrapped in @const-start: confirmed on real hardware (v0.1.49)
-; that this file crashes (type_error, "v UNDEFINED" in bufset-i8) when
-; flash-resident, because it calls util.lisp's clamp-f/clamp01/max-f/
-; to-fp/cell-to-i8/i8-to-cell, which are themselves flash-resident in
-; util.lisp's own SEPARATE @const-start block - a flash function in one
-; file calling a flash function in a different file's own block breaks
-; parameter binding resolution. This confirms the theory from the
-; v0.1.46 crash. util.lisp/protocol.lisp stay wrapped (self-contained,
-; call nothing outside their own file); this file, throttle.lisp,
-; storage.lisp and package.lisp stay unwrapped since they all call into
-; util.lisp - calling a flash function from normal (non-flash) code is
-; confirmed safe, only flash-calling-flash-across-files is not. Fixing
-; this properly would mean duplicating the tiny shared helpers locally
-; into each file that needs them so no file's own flash block ever
-; calls into another file's - not done here, real work for a future
-; pass if the current ~95% heap usage needs to come down further.
+; Confirmed on real hardware (v0.1.49): this file crashed (type_error,
+; "v UNDEFINED" in bufset-i8) when flash-resident and calling
+; util.lisp's clamp-f/clamp01/max-f/to-fp/cell-to-i8/i8-to-cell, which
+; are themselves flash-resident in util.lisp's own SEPARATE
+; @const-start block - a flash function in one file calling a flash
+; function in a DIFFERENT file's own block breaks parameter binding
+; resolution on this firmware. Calling a flash function from normal
+; (non-flash) code remains confirmed safe.
+;
+; Fix: this file now has its own private, self-contained copies of
+; every helper it needs (mp-clamp-f/mp-clamp01/mp-max-f/mp-to-fp/
+; mp-cell-to-i8/mp-i8-to-cell/mp-fp-scale below, `mp-` for "map" to
+; keep them clearly distinct from util.lisp's originals rather than
+; silently redefining those same global names) - nothing in this
+; file's own @const-start block calls out to another file's block
+; anymore, only itself and native extensions.
+@const-start
+
+; Private copies of util.lisp's helpers - see the file header comment
+; for why these exist instead of calling util.lisp directly. Kept
+; identical in behavior to their util.lisp counterparts.
+(define mp-fp-scale 1000)
+(defun mp-clamp-f (v lo hi) (if (< v lo) lo (if (> v hi) hi v)))
+(defun mp-clamp01 (v) (mp-clamp-f v 0.0 1.0))
+(defun mp-max-f (a b) (if (> a b) a b))
+(defun mp-to-fp (raw) (to-i (* raw 1000.0)))
+(defun mp-cell-to-i8 (v) (mp-clamp-f (/ v 10) -100 100))
+(defun mp-i8-to-cell (v) (* v 10))
 
 (define map-thr-n 21)
 (define map-duty-n 21)
@@ -45,10 +57,10 @@
 (defun map-idx (thr-i duty-i) (+ (* thr-i map-duty-n) duty-i))
 
 (defun map-get-cell (thr-i duty-i)
-    (i8-to-cell (bufget-i8 map-buf (map-idx thr-i duty-i))))
+    (mp-i8-to-cell (bufget-i8 map-buf (map-idx thr-i duty-i))))
 
 (defun map-set-cell (thr-i duty-i val)
-    (bufset-i8 map-buf (map-idx thr-i duty-i) (cell-to-i8 val)))
+    (bufset-i8 map-buf (map-idx thr-i duty-i) (mp-cell-to-i8 val)))
 
 ; ---- bilinear interpolation ----------------------------------------------
 ; thr01, duty01 in fp-scale (0..1000, see util.lisp) - integer, not
@@ -67,21 +79,21 @@
 ; "let" chapter of the LispBM reference), so this is one environment
 ; frame instead of five nested ones.
 (defun map-lookup (thr01 duty01)
-    (let ((tf (* (clamp-f thr01 0 fp-scale) (- map-thr-n 1)))
-          (df (* (clamp-f duty01 0 fp-scale) (- map-duty-n 1)))
-          (t0 (/ tf fp-scale))
-          (d0 (/ df fp-scale))
+    (let ((tf (* (mp-clamp-f thr01 0 mp-fp-scale) (- map-thr-n 1)))
+          (df (* (mp-clamp-f duty01 0 mp-fp-scale) (- map-duty-n 1)))
+          (t0 (/ tf mp-fp-scale))
+          (d0 (/ df mp-fp-scale))
           (t1 (if (< t0 (- map-thr-n 1)) (+ t0 1) t0))
           (d1 (if (< d0 (- map-duty-n 1)) (+ d0 1) d0))
-          (tw (- tf (* t0 fp-scale)))
-          (dw (- df (* d0 fp-scale)))
+          (tw (- tf (* t0 mp-fp-scale)))
+          (dw (- df (* d0 mp-fp-scale)))
           (v00 (map-get-cell t0 d0))
           (v01 (map-get-cell t0 d1))
           (v10 (map-get-cell t1 d0))
           (v11 (map-get-cell t1 d1))
-          (v0 (+ v00 (/ (* (- v01 v00) dw) fp-scale)))
-          (v1 (+ v10 (/ (* (- v11 v10) dw) fp-scale))))
-    (+ v0 (/ (* (- v1 v0) tw) fp-scale))
+          (v0 (+ v00 (/ (* (- v01 v00) dw) mp-fp-scale)))
+          (v1 (+ v10 (/ (* (- v11 v10) dw) mp-fp-scale))))
+    (+ v0 (/ (* (- v1 v0) tw) mp-fp-scale))
     ))
 
 ; ---- default map generator (Thermal Street) -------------------------------
@@ -105,7 +117,7 @@
         (looprange di 0 map-duty-n
             (let ((duty (/ (to-float di) (to-float (- map-duty-n 1)))))
             (map-set-cell ti di
-                (to-fp (thermal-cell thr duty peak balance-duty trans-width
+                (mp-to-fp (thermal-cell thr duty peak balance-duty trans-width
                                       trans-shape engine-brake overrun-regen regen-curve)))
             ))
         )))
@@ -122,27 +134,27 @@
 ; smoothstep-ish weighting that only kicks in above ~60% throttle so
 ; high-hold shapes the top of the curve, not the low/mid range.
 (defun thermal-smooth (thr)
-    (clamp01 (/ (- thr 0.6) 0.4)))
+    (mp-clamp01 (/ (- thr 0.6) 0.4)))
 
 ; Duty at which this throttle level is considered "at equilibrium"
 ; (current-rel crosses zero). speed-coupling 1.0 => balance-duty == thr.
 (defun thermal-balance-duty (thr speed-coupling)
-    (clamp01 (* thr speed-coupling)))
+    (mp-clamp01 (* thr speed-coupling)))
 
 (defun thermal-cell (thr duty peak balance-duty trans-width trans-shape
                       engine-brake overrun-regen regen-curve)
     (if (< thr 0.02)
         ; throttle released: engine braking that grows with duty
         (- (* engine-brake (pow duty (+ 1.0 regen-curve))))
-    (let ((start (clamp01 (- balance-duty trans-width))))
+    (let ((start (mp-clamp01 (- balance-duty trans-width))))
     (cond
         ((<= duty start) peak)
         ((<= duty balance-duty)
-            (let ((p (/ (- duty start) (max-f 0.001 (- balance-duty start)))))
+            (let ((p (/ (- duty start) (mp-max-f 0.001 (- balance-duty start)))))
             (* peak (- 1.0 (shape-curve p trans-shape)))))
         (t
-            (let ((over (/ (- duty balance-duty) (max-f 0.001 (- 1.0 balance-duty)))))
-            (- (* overrun-regen (pow (clamp01 over) (+ 1.0 regen-curve))))))
+            (let ((over (/ (- duty balance-duty) (mp-max-f 0.001 (- 1.0 balance-duty)))))
+            (- (* overrun-regen (pow (mp-clamp01 over) (+ 1.0 regen-curve))))))
     ))))
 
 ; trans-shape: 0 linear, 1 progressive (ease-in), 2 exponential, 3 late/abrupt
@@ -153,3 +165,5 @@
         ((= shape 2) (- 1.0 (pow (- 1.0 p) 3)))
         (t (pow p 4))
     ))
+
+@const-end
