@@ -87,15 +87,10 @@ for 441 raw floats, so:
 - Four bytes are packed into one 32-bit slot with `eeprom-store-i`
   (`pack4`), so the 441 cells fit in `ceil(441/4) = 111` slots.
 - Layout (addresses 0..127): address 0 is a magic/version marker, 1..14
-  hold the throttle + configurator parameters (address 4 additionally
-  packs the brake curve mode into bits 1-2, alongside invert/deadband),
-  15..125 hold the packed map (111 slots), 126 holds the brake mode
-  (0=off, 1=dual-channel ADC2, 2=bidirectional single-channel ADC1),
-  127 holds the brake curve constant (`-5..5`, same range as VESC
-  Tool's own ADC/PPM "Throttle Expo" parameter, used with
-  `brake-curve-apply` in `throttle.lisp` - a pure-lisp reimplementation
-  of that same curve math, not the native `throttle-curve` extension;
-  see the header comment there for why). See the header
+  hold the throttle + configurator parameters, 15..125 hold the packed
+  map (111 slots), 126 holds the brake mode (0=off, 1=dual-channel
+  ADC2, 2=bidirectional single-channel ADC1), 127 is
+  reserved for future use. See the header
   comment in `storage.lisp` for the exact field order.
 
 `storage-save` writes all of the above then calls `conf-store` once so the

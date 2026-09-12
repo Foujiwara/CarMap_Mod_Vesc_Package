@@ -165,36 +165,3 @@
             (max-f 0.0 (- (thr-adc-signed))))
         (t 0.0)
     ))
-
-; Brake curve shaping - same math as the native throttle-curve extension
-; (utils_throttle_curve in bldc's firmware, the one the stock ADC/PPM/
-; VESC Remote apps use for their own "throttle curve" setting), but
-; reimplemented here in pure LispBM instead of calling that extension
-; directly. Reason: calling it from the 100 Hz control loop caused an
-; out_of_memory error on real hardware (heap cells exhausted even right
-; after a cold power-cycle) - root cause not fully isolated, but this
-; removes the dependency entirely using only pow/exp, which map.lisp's
-; own gen-thermal-map already calls the same way at boot without issue.
-; val01 is 0..1 (already the absolute brake value), curve is -5..5 (see
-; docs/protocol.md), mode is 0=Exponential 1=Natural 2=Polynomial,
-; matching VESC Tool's own enum order for this parameter. Returns 0..1;
-; the caller re-applies the sign (control-loop always calls this for
-; the brake side, which is always <= 0).
-(defun brake-curve-apply (val01 curve mode)
-    (cond
-        ((= mode 0) ; Exponential: y = 1-(1-x)^(1+c), or x^(1-c) when c<0
-            (if (>= curve 0.0)
-                (- 1.0 (pow (- 1.0 val01) (+ 1.0 curve)))
-                (pow val01 (- 1.0 curve))))
-        ((= mode 1) ; Natural: y = (e^(cx)-1)/(e^c-1) family
-            (if (< (abs curve) 1.0e-10)
-                val01
-                (if (>= curve 0.0)
-                    (- 1.0 (/ (- (exp (* curve (- 1.0 val01))) 1.0) (- (exp curve) 1.0)))
-                    (/ (- (exp (* (- curve) val01)) 1.0) (- (exp (- curve)) 1.0)))))
-        ((= mode 2) ; Polynomial: y = x/(1+c(1-x)), or x/(1-c(1-x)) when c<0
-            (if (>= curve 0.0)
-                (- 1.0 (/ (- 1.0 val01) (+ 1.0 (* curve val01))))
-                (/ val01 (- 1.0 (* curve (- 1.0 val01))))))
-        (t val01) ; Linear
-    ))
