@@ -29,7 +29,7 @@ Item {
     anchors.fill: parent
     // Bumped on every edit - shown in the header as "build N" so a
     // stale/cached install is obvious at a glance instead of ambiguous.
-    property int buildMarker: 34
+    property int buildMarker: 35
     // Desktop and phone hosts need genuinely different sizing rules, not
     // one compromise value - a cap small enough to avoid overflowing a
     // phone screen leaves desktop far too small, and anything generous
@@ -1307,13 +1307,20 @@ Item {
                         }
                         RowLayout { Layout.fillWidth: true
                             Label { text: "Curve constant"; color: "#ccc"; Layout.fillWidth: true; elide: Text.ElideRight }
-                            Label { text: cfgBrakeCurveK.toFixed(2); color: "#fff" }
+                            Label { text: Math.round(cfgBrakeCurveK*100); color: "#fff" }
                         }
                         Slider {
+                            // Displayed as -100..100, matching VESC
+                            // Tool's own throttle curve constant slider
+                            // (App Settings -> ADC/PPM); cfgBrakeCurveK
+                            // itself stays -1..1 internally, since
+                            // that's the range the throttle-curve
+                            // extension itself expects.
                             Layout.fillWidth: true
-                            from: -1.0; to: 1.0
-                            value: cfgBrakeCurveK
-                            onMoved: { cfgBrakeCurveK = value; sendSetThrottle() }
+                            from: -100; to: 100
+                            stepSize: 1
+                            value: cfgBrakeCurveK * 100
+                            onMoved: { cfgBrakeCurveK = value / 100.0; sendSetThrottle() }
                         }
                         Label {
                             text: "Negative = gentle start, aggressive near full lever. Positive = the opposite. 0 = linear."
