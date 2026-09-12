@@ -17,6 +17,24 @@
 (read-eval-program bin-storage)
 (read-eval-program bin-protocol)
 
+; v0.1.46 tried wrapping every defun and constant define across all
+; five imported files (plus this one) in @const-start/@const-end (see
+; the LispBM reference's "Flash memory" chapter) to move them off the
+; tiny RAM heap, which real hardware showed sitting at ~97% used even
+; at idle - confirmed real by official vesc_pkg packages (dash16,
+; dash35b, vdisp) using the same technique. It caused a NEW crash on
+; real hardware instead (`type_error` in bufset-i8, "v UNDEFINED") -
+; some interaction between multiple @const-start blocks split across
+; separate files/read-eval-program calls broke a closure's parameter
+; binding, most likely cell-to-i8/i8-to-cell (util.lisp) or something
+; calling into them. Reverted (v0.1.47) rather than keep guessing at a
+; mechanism that can't be tested without hardware. If revisiting this:
+; try ONE single @const-start block for the whole concatenated program
+; instead of one per file, or const-ify only leaf functions that call
+; nothing else defined in a different file's own block, and verify on
+; real hardware before considering it done - this was never actually
+; validated, only reasoned about.
+
 ; ---------------------------------------------------------------------
 ; Boot: load persisted map/config, or generate the Thermal Street default
 ; if this is the first run (no valid eeprom magic yet).
