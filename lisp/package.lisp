@@ -69,7 +69,14 @@
                     (map-lookup live-throttle (clamp01 (abs live-duty)))))
             (set-current-rel live-cur-rel)
             (timeout-reset)
-            (sleep 0.01) ; ~100 Hz control loop
+            ; 200 Hz instead of the original 100 Hz: halves the loop's own
+            ; contribution to input-to-current latency. Safe to tighten
+            ; now that map-lookup/thr-normalize/thr-read (throttle.lisp,
+            ; map.lisp) were flattened from nested lets to single lets
+            ; each - fewer environment frames allocated per tick than the
+            ; 100 Hz version had, so this isn't a net increase in heap
+            ; pressure per second despite running twice as often.
+            (sleep 0.005) ; ~200 Hz control loop
         )))
 
 ; ---------------------------------------------------------------------

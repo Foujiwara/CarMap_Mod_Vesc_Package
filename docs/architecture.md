@@ -59,7 +59,7 @@ milliseconds of extra latency can mean a rider falls. This package instead
 performs a static lookup (bilinear interpolation over a 21x21 grid, a
 handful of float multiplications) followed by one `set-current-rel` call,
 comparable in weight to Refloat's own `bms.lisp` (which *is* plain LispBM).
-A ~100 Hz LispBM loop (`sleep 0.01`) is far faster than any driveline or
+A ~200 Hz LispBM loop (`sleep 0.005`) is far faster than any driveline or
 human-perceptible timescale here, so there is no measured or expected
 benefit to a native C library, at the cost of a cross-compilation
 toolchain, no ability to test without hardware, and a native-code sandbox
@@ -73,7 +73,7 @@ to move into a native library - not the rest of the package.
 
 1. **Event handler** (`spawn event-handler`) - blocks on `recv` for
    `event-data-rx`, dispatches incoming QML packets (see protocol.md).
-2. **Control loop** (`carmap-ctl`, ~100 Hz) - read throttle/duty/erpm,
+2. **Control loop** (`carmap-ctl`, ~200 Hz) - read throttle/duty/erpm,
    bilinear-interpolate the map, `set-current-rel`, `timeout-reset`.
 3. **Telemetry loop** (`carmap-tel`, 20 Hz) - sends one compact LIVE
    packet. The full map/config are *never* sent proactively, only on
@@ -115,6 +115,21 @@ jerky/stuttering acceleration (both the app and this package driving
 the motor from the same signal at once). This package does not modify
 App Settings itself; that one manual step is documented in
 `package_README.md`.
+
+A second, separate App Settings -> ADC option affects latency even
+with Control Type correctly set to Off: **Use Filter**
+(`app_adc_conf.use_filter`, on by default in VESC Tool). Confirmed by
+reading `applications/app_adc.c` in vedderb/bldc: this applies a
+5-sample moving-average filter to the ADC app's own decoded value
+*before* `get-adc-decoded` ever returns it to this package - entirely
+outside `thr-cfg-filter`'s control, since that only filters what we do
+with the value *after* reading it. Its own description in VESC Tool
+says exactly this: "Use a median filter to reject noise. This will
+introduce a slight delay." At the ADC app's internal 1 kHz sample
+rate this is roughly 5-10 ms of settling time - not huge on its own,
+but real and free to remove: turn **Use Filter** off in App Settings if
+input latency still feels present after confirming `thr-cfg-filter` is
+at 1.0 (no filtering) in this package's own Configurator tab.
 
 ## Why the 3D view is an isometric Canvas, not "real" 3D
 

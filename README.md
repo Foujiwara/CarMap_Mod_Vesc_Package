@@ -21,7 +21,7 @@ voltage limits) stays fully in control.
 
 - Throttle source: ADC, PPM or UART, with min/max/deadband/invert/filter
   calibration and a clean seam for adding more sources later.
-- 21x21 Throttle x Duty grid, bilinear interpolation, ~100 Hz control
+- 21x21 Throttle x Duty grid, bilinear interpolation, ~200 Hz control
   loop, entirely in LispBM (see [docs/architecture.md](docs/architecture.md)
   for why C wasn't needed here).
 - Automatic map generator with 4 presets (Thermal Street, Thermal Race,

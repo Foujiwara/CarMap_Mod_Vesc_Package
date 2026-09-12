@@ -119,14 +119,18 @@
     ))
 
 ; Apply min/max calibration, deadband and inversion; returns 0..1.
+; One flat `let` (LispBM allows later bindings to reference earlier ones
+; in the same let - see map-lookup) instead of four nested ones: same
+; result, one environment frame instead of four, called every control
+; loop tick.
 (defun thr-normalize (raw)
-    (let ((v (/ (- raw thr-cfg-min) (max-f 0.001 (- thr-cfg-max thr-cfg-min)))))
-    (let ((vc (clamp01 v)))
-    (let ((vd (if (< vc thr-cfg-deadband) 0.0
-                  (/ (- vc thr-cfg-deadband) (max-f 0.001 (- 1.0 thr-cfg-deadband))))))
-    (let ((vf (clamp01 vd)))
+    (let ((v (/ (- raw thr-cfg-min) (max-f 0.001 (- thr-cfg-max thr-cfg-min))))
+          (vc (clamp01 v))
+          (vd (if (< vc thr-cfg-deadband) 0.0
+                  (/ (- vc thr-cfg-deadband) (max-f 0.001 (- 1.0 thr-cfg-deadband)))))
+          (vf (clamp01 vd)))
     (if (= thr-cfg-invert 1) (- 1.0 vf) vf)
-    )))))
+    ))
 
 ; Public entry point: read + normalize + low-pass filter. Call once per
 ; control loop iteration. The Test source and bidirectional-ADC mode
@@ -137,12 +141,12 @@
 ; filter so behavior matches every other source.
 (defun thr-read ()
     (let ((skip-normalize (or (= thr-cfg-source thr-src-test)
-                               (and (= thr-cfg-source thr-src-adc) (= thr-cfg-brake-mode thr-brake-bidir)))))
-    (let ((n (if skip-normalize (clamp01 (thr-read-raw)) (thr-normalize (thr-read-raw)))))
+                               (and (= thr-cfg-source thr-src-adc) (= thr-cfg-brake-mode thr-brake-bidir))))
+          (n (if skip-normalize (clamp01 (thr-read-raw)) (thr-normalize (thr-read-raw)))))
     (progn
         (setq thr-filtered (+ thr-filtered (* thr-cfg-filter (- n thr-filtered))))
         thr-filtered)
-    )))
+    ))
 
 ; Brake side, 0..1. Dual mode reads ADC2 (channel 1) with the same
 ; min/max/deadband calibration as the main channel (never inverted -
@@ -156,11 +160,11 @@
     (cond
         ((not (= thr-cfg-source thr-src-adc)) 0.0)
         ((= thr-cfg-brake-mode thr-brake-dual)
-            (let ((v (/ (- (get-adc-decoded 1) thr-cfg-min) (max-f 0.001 (- thr-cfg-max thr-cfg-min)))))
-            (let ((vc (clamp01 v)))
+            (let ((v (/ (- (get-adc-decoded 1) thr-cfg-min) (max-f 0.001 (- thr-cfg-max thr-cfg-min))))
+                  (vc (clamp01 v)))
             (if (< vc thr-cfg-deadband) 0.0
                 (clamp01 (/ (- vc thr-cfg-deadband) (max-f 0.001 (- 1.0 thr-cfg-deadband)))))
-            )))
+            ))
         ((= thr-cfg-brake-mode thr-brake-bidir)
             (max-f 0.0 (- (thr-adc-signed))))
         (t 0.0)
