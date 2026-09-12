@@ -29,7 +29,7 @@ Item {
     anchors.fill: parent
     // Bumped on every edit - shown in the header as "build N" so a
     // stale/cached install is obvious at a glance instead of ambiguous.
-    property int buildMarker: 35
+    property int buildMarker: 36
     // Desktop and phone hosts need genuinely different sizing rules, not
     // one compromise value - a cap small enough to avoid overflowing a
     // phone screen leaves desktop far too small, and anything generous
@@ -101,7 +101,7 @@ Item {
     // throttle-curve LispBM extension - the same one the stock ADC/PPM/
     // VESC Remote apps use for their own throttle curve setting.
     property int cfgBrakeCurveMode: 1 // 0=Exponential 1=Natural 2=Polynomial
-    property real cfgBrakeCurveK: 0.0 // -1..1, 0 = no shaping (linear)
+    property real cfgBrakeCurveK: 0.0 // -5..5 (matches VESC Tool's own throttle_exp range), 0 = no shaping (linear)
 
     function initMapData() {
         var a = []
@@ -1307,20 +1307,26 @@ Item {
                         }
                         RowLayout { Layout.fillWidth: true
                             Label { text: "Curve constant"; color: "#ccc"; Layout.fillWidth: true; elide: Text.ElideRight }
-                            Label { text: Math.round(cfgBrakeCurveK*100); color: "#fff" }
+                            Label { text: Math.round(cfgBrakeCurveK / 5.0 * 100); color: "#fff" }
                         }
                         Slider {
-                            // Displayed as -100..100, matching VESC
-                            // Tool's own throttle curve constant slider
-                            // (App Settings -> ADC/PPM); cfgBrakeCurveK
-                            // itself stays -1..1 internally, since
-                            // that's the range the throttle-curve
-                            // extension itself expects.
+                            // Displayed as -100..100, matching VESC Tool's
+                            // own throttle curve constant slider (App
+                            // Settings -> ADC/PPM). Verified against
+                            // vesc_tool's real source: throttle_exp's
+                            // config range is minDouble=-5/maxDouble=5,
+                            // and ParamEditDouble's percentage box shows
+                            // percentage = 100*val/max(|min|,|max|), i.e.
+                            // -100..100 maps linearly to -5..5, NOT
+                            // -1..1. cfgBrakeCurveK itself is therefore
+                            // kept in -5..5, matching what the native
+                            // throttle-curve extension's curve_acc/
+                            // curve_brake arguments actually expect.
                             Layout.fillWidth: true
                             from: -100; to: 100
                             stepSize: 1
-                            value: cfgBrakeCurveK * 100
-                            onMoved: { cfgBrakeCurveK = value / 100.0; sendSetThrottle() }
+                            value: cfgBrakeCurveK / 5.0 * 100
+                            onMoved: { cfgBrakeCurveK = (value / 100.0) * 5.0; sendSetThrottle() }
                         }
                         Label {
                             text: "Negative = gentle start, aggressive near full lever. Positive = the opposite. 0 = linear."
