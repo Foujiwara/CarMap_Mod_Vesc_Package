@@ -18,6 +18,17 @@
 ; everything else (index math, storage packing, protocol row size) derives
 ; from these two constants except the wire packet size in protocol.lisp
 ; (21 values/row), which should be updated to match DUTY-N if you resize.
+;
+; @const-start/@const-end (see util.lisp's comment) moves everything in
+; this file to flash instead of the RAM heap. This is the real test of
+; the v0.1.46 crash theory: this file calls util.lisp's clamp-f/
+; clamp01/max-f/to-fp/cell-to-i8/i8-to-cell, which are ALSO flash-
+; resident (their own file's separate @const-start block, confirmed
+; working alone in v0.1.48) - if a flash function in one file calling a
+; flash function in a DIFFERENT file's own block is what actually broke
+; things, it should reproduce here. If it works, that theory was wrong
+; and the crash was something else.
+@const-start
 
 (define map-thr-n 21)
 (define map-duty-n 21)
@@ -136,3 +147,5 @@
         ((= shape 2) (- 1.0 (pow (- 1.0 p) 3)))
         (t (pow p 4))
     ))
+
+@const-end
