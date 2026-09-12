@@ -1,4 +1,29 @@
 ; util.lisp - tiny shared helpers, loaded first by package.lisp.
+;
+; @const-start/@const-end (see the LispBM reference's "Flash memory"
+; chapter) moves every global definition inside the block to constant
+; memory (flash) instead of the normal RAM heap - real hardware showed
+; heap sitting at ~97% used even at idle, before any of this package's
+; own runtime data existed, because every defun's code is itself a tree
+; of cons cells that otherwise lives on the tiny RAM heap permanently,
+; just for the program to exist.
+;
+; A first attempt (v0.1.46) wrapped every file this way, each in its
+; own separate block, and crashed on real hardware with a type_error in
+; bufset-i8 ("v UNDEFINED") - almost certainly from cell-to-i8 (this
+; file's flash block) being called from map.lisp's OWN separate flash
+; block, i.e. a cross-file call between two different @const-start
+; blocks. Reverted (v0.1.47), and this file is deliberately the first,
+; narrowest retry: every function here only ever calls another function
+; in this SAME file, or a native extension - never anything from
+; another file's own block - so wrapping only this file tests whether
+; @const-start works at all on this firmware without the cross-file
+; interaction that broke the last attempt. map.lisp/throttle.lisp/
+; storage.lisp/package.lisp are deliberately left unwrapped this time,
+; since they all call into this file and each other across file
+; boundaries - do not wrap them until this narrower change is confirmed
+; working on real hardware.
+@const-start
 
 (defun clamp-f (v lo hi)
     (if (< v lo) lo (if (> v hi) hi v)))
@@ -20,9 +45,7 @@
 ; in fundamental.c) instead produces LBM_TYPE_I, an inline tagged value
 ; that costs zero heap cells. A control loop doing float math was
 ; therefore allocating and immediately garbage-collecting dozens of
-; heap cells every tick just from arithmetic, at 200 Hz - this is what
-; was driving heap usage up in practice (confirmed on real hardware:
-; ~96% heap used at idle after switching to floats-everywhere).
+; heap cells every tick just from arithmetic, at 200 Hz.
 ;
 ; `fp-scale` (1000) matches the wire protocol's own existing x1000
 ; fixed-point convention (fx-enc/fx-dec in protocol.lisp) exactly on
@@ -52,10 +75,10 @@
 (defun fp-to-f (v) (/ (to-float v) 1000.0))
 
 ; Shared -1.0..1.0 (fp-scale, i.e. -1000..1000) <-> signed-byte
-; quantization (1% resolution), used by both map.lisp (the live RAM
-; buffer, see the note there) and storage.lisp (the eeprom packing) -
-; defined here, loaded first, so both can use it regardless of which
-; one runs first. Both sides are plain integers now - no floats, no
-; heap allocation.
+; quantization (1% resolution), used by map.lisp (the live RAM buffer,
+; see the note there). Both sides are plain integers now - no floats,
+; no heap allocation.
 (defun cell-to-i8 (v) (clamp-f (/ v 10) -100 100))
 (defun i8-to-cell (v) (* v 10))
+
+@const-end
