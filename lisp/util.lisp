@@ -1,4 +1,21 @@
 ; util.lisp - tiny shared helpers, loaded first by package.lisp.
+;
+; @const-start/@const-end (see the LispBM reference's "Flash memory"
+; chapter) moves every global definition inside the block to constant
+; memory (flash) instead of the normal RAM heap - confirmed as the real
+; fix for persistent high heap usage on real hardware (heap sitting at
+; ~97% used even at idle, before any of this package's own runtime data
+; existed): every defun's code is itself a tree of cons cells, and
+; without this, that tree lives on the tiny RAM heap for the entire
+; life of the script, permanently, just for the program's own code to
+; exist - not because of anything it does at runtime. Only truly
+; constant top-level values belong in a block like this: anything ever
+; reassigned with `setq` (thr-cfg-min, live-throttle, etc. in the other
+; files) must stay a normal (RAM) global, since flash isn't writable at
+; that granularity/speed - so only defuns and genuinely-fixed constants
+; (fp-scale here) are inside this block, never the mutable config/state
+; globals defined elsewhere.
+@const-start
 
 (defun clamp-f (v lo hi)
     (if (< v lo) lo (if (> v hi) hi v)))
@@ -20,9 +37,7 @@
 ; in fundamental.c) instead produces LBM_TYPE_I, an inline tagged value
 ; that costs zero heap cells. A control loop doing float math was
 ; therefore allocating and immediately garbage-collecting dozens of
-; heap cells every tick just from arithmetic, at 200 Hz - this is what
-; was driving heap usage up in practice (confirmed on real hardware:
-; ~96% heap used at idle after switching to floats-everywhere).
+; heap cells every tick just from arithmetic, at 200 Hz.
 ;
 ; `fp-scale` (1000) matches the wire protocol's own existing x1000
 ; fixed-point convention (fx-enc/fx-dec in protocol.lisp) exactly on
@@ -59,3 +74,5 @@
 ; heap allocation.
 (defun cell-to-i8 (v) (clamp-f (/ v 10) -100 100))
 (defun i8-to-cell (v) (* v 10))
+
+@const-end

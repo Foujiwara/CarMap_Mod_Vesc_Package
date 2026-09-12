@@ -63,6 +63,17 @@
 ; storage layout growth, EEPROM field additions) is the real cause
 ; before touching the brake math again.
 ;
+; @const-start/@const-end (see util.lisp's comment) below moves every
+; defun in this file to flash instead of the RAM heap - confirmed as
+; the real fix for heap sitting at ~97% used even at idle/normal
+; operation on real hardware, well before any of the per-tick float
+; optimization work even mattered: a script's own function bodies live
+; permanently on the tiny RAM heap for its whole lifetime just by
+; existing, regardless of what they do at runtime, unless moved to
+; flash like this. live-throttle/live-duty/live-erpm/live-cur-rel/
+; live-brake right above stay OUTSIDE this block since they're
+; reassigned with setq every tick.
+;
 ; live-throttle/live-brake/live-cur-rel are fp-scale integers (see
 ; util.lisp) all the way through this loop - thr-read, thr-brake-read
 ; and map-lookup all stay in LispBM's zero-heap-cost integer type now.
@@ -74,6 +85,7 @@
 ; fully float control-loop was creating and immediately having to
 ; garbage-collect every single tick (confirmed via lispBM's heap.c:
 ; every float allocates a heap cons cell, plain integers do not).
+@const-start
 (defun control-loop ()
     (loopwhile t
         (progn
@@ -258,6 +270,8 @@
             ((event-data-rx . (? data)) (handle-packet data))
             (_ nil)
         )))
+
+@const-end
 
 ; ---------------------------------------------------------------------
 ; Spawn everything. Order: event handler first so it's ready to receive

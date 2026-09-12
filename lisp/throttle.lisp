@@ -15,7 +15,16 @@
 ; can't be avoided - but each one is converted to fp-scale immediately
 ; at the point of reading, instead of staying a float through every
 ; subsequent calculation the way this file worked before.
+;
+; @const-start/@const-end blocks below (see util.lisp's comment) move
+; truly-constant definitions and every defun to flash instead of the
+; RAM heap. This file mixes those with mutable config/state (thr-cfg-*,
+; thr-filtered, thr-adc-cal-*, uart-last-raw/started, thr-test-value -
+; all reassigned with `setq` elsewhere), so several separate blocks are
+; used instead of one big one, always skipping over whatever is mutable
+; in between - constant blocks cannot be nested, but can be sequential.
 
+@const-start
 (define thr-src-adc  0)
 (define thr-src-ppm  1)
 (define thr-src-uart 2)
@@ -25,6 +34,7 @@
                          ; invert since the UI already sends a clean
                          ; fp-scale value; still goes through the
                          ; low-pass filter.
+@const-end
 
 ; Mutable config, updated by protocol.lisp on SET_THROTTLE and loaded from
 ; storage.lisp at boot. Defaults are conservative (ADC, no invert). All
@@ -63,9 +73,11 @@
 ; control-loop in package.lisp); the map's own throttle-released
 ; braking still applies whenever the brake channel reads 0 (at rest, or
 ; disabled).
+@const-start
 (define thr-brake-none  0)
 (define thr-brake-dual  1)
 (define thr-brake-bidir 2)
+@const-end
 (define thr-cfg-brake-mode thr-brake-none)
 
 ; ADC bidirectional calibration cache (adc-v1-start/-center/-end from
@@ -92,15 +104,6 @@
 (define thr-adc-cal-end 0.0)
 (define thr-adc-cal-loaded 0)
 
-(defun thr-adc-cal-ensure ()
-    (if (= thr-adc-cal-loaded 0)
-        (progn
-            (setq thr-adc-cal-start (conf-get 'adc-v1-start))
-            (setq thr-adc-cal-center (conf-get 'adc-v1-center))
-            (setq thr-adc-cal-end (conf-get 'adc-v1-end))
-            (setq thr-adc-cal-loaded 1))
-        nil))
-
 ; UART throttle: a tiny 3-byte frame so noise on the line can't be mistaken
 ; for a valid reading. Frame: <0xA5> <percent 0..200, meaning 0..100.0%>
 ; <checksum = 0xA5 xor percent>. Anything that doesn't check out keeps the
@@ -119,6 +122,19 @@
 ; explicit Stop button (like VESC Tool's own bench-test panel) that
 ; sends 0 directly; use it before disconnecting or changing source.
 (define thr-test-value 0)
+
+; Every defun below is fixed code - none of them are ever reassigned -
+; so they all go in one final flash block.
+@const-start
+
+(defun thr-adc-cal-ensure ()
+    (if (= thr-adc-cal-loaded 0)
+        (progn
+            (setq thr-adc-cal-start (conf-get 'adc-v1-start))
+            (setq thr-adc-cal-center (conf-get 'adc-v1-center))
+            (setq thr-adc-cal-end (conf-get 'adc-v1-end))
+            (setq thr-adc-cal-loaded 1))
+        nil))
 
 (defun uart-throttle-init ()
     (if (= uart-started 0)
@@ -229,3 +245,5 @@
             (max-f 0 (- (thr-adc-signed))))
         (t 0)
     ))
+
+@const-end

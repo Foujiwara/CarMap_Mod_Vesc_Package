@@ -30,9 +30,21 @@
 ; valid data" and fall through to storage-reset instead - a one-time
 ; reset of calibration/map/brake-mode back to defaults on first boot
 ; with this version, which is far safer than silently misreading bytes.
+;
+; @const-start/@const-end (see util.lisp's comment) moves the constants
+; below and every defun in this file to flash instead of the RAM heap -
+; none of them are ever reassigned with setq (storage-load/storage-reset
+; use `define` on OTHER globals like thr-cfg-min from inside their own
+; bodies, which still works normally regardless of where the function's
+; own code lives - @const-start only affects how the code itself is
+; stored, not what define/setq do when it runs). storage-pause-ticks
+; further down IS mutable (setq'd both here and in control-loop), so it
+; stays outside any flash block, in normal RAM.
+@const-start
 (define eeprom-magic 20260912)
 (define eeprom-map-base 15)
 (define eeprom-map-slots 111)
+@const-end
 
 ; Ticks (at control-loop's 200 Hz) for which control-loop skips
 ; set-current-rel/timeout-reset entirely - see the comment there and in
@@ -40,6 +52,8 @@
 ; tick unconditionally, so it can never stay stuck even if storage-save
 ; itself errors partway through.
 (define storage-pause-ticks 0)
+
+@const-start
 
 (defun pack4 (v0 v1 v2 v3)
     (bitwise-or (bitwise-or (byte-u v0) (shl (byte-u v1) 8))
@@ -180,3 +194,5 @@
                           cfg-overrun-regen cfg-regen-curve)
         t
     ))
+
+@const-end
