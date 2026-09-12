@@ -47,9 +47,12 @@ independent 0..1 signal), 2 = bidirectional (a single center-zero ADC1
 input - above center is accelerator, below is brake, using the ADC
 app's own `adc-v1-start`/`-center`/`-end` calibration from App Settings
 instead of this package's own Min/Max). Whichever mode, the resulting
-brake value 0..1 is shaped by the native `throttle-curve` LispBM
-extension (`brake_curve_mode`/`brake_curve_k`) - the same one the stock
-ADC/PPM/VESC Remote apps use for their own throttle curve setting -
+brake value 0..1 is shaped by `brake-curve-apply` (`lisp/throttle.lisp`,
+`brake_curve_mode`/`brake_curve_k`) - a pure-lisp reimplementation of
+the same Linear/Natural/Exponential math the stock ADC/PPM/VESC Remote
+apps use for their own throttle curve setting (calling the native
+`throttle-curve` LispBM extension directly caused an out_of_memory
+crash on real hardware - see the header comment in throttle.lisp) -
 before being applied directly as current-rel, bypassing the map
 entirely while the brake is above its deadband. `brake_curve_k` ranges
 -5..5, matching VESC Tool's own ADC/PPM "Throttle Expo" parameter

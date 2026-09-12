@@ -22,11 +22,14 @@
 ;        brake_mode: 0=off 1=dual-channel ADC2 2=bidirectional ADC1, only
 ;        meaningful when source == ADC. See docs/architecture.md.
 ;        brake_curve_mode/brake_curve_k: shape applied to the direct
-;        brake reading via the native throttle-curve extension (the same
-;        one the stock ADC/PPM/VESC Remote apps use) - 0=Exponential
-;        1=Natural 2=Polynomial, k in -5..5 (same range as VESC Tool's
-;        own ADC/PPM "Throttle Expo" parameter - verified against
-;        vesc_tool's real config XML, not assumed).
+;        brake reading via brake-curve-apply (throttle.lisp), a pure-lisp
+;        reimplementation of the same Linear/Natural/Exponential math as
+;        VESC Tool's own ADC/PPM throttle curve setting (calling the
+;        native throttle-curve extension directly caused an
+;        out_of_memory crash on real hardware) - 0=Exponential 1=Natural
+;        2=Polynomial, k in -5..5 (same range as VESC Tool's own ADC/PPM
+;        "Throttle Expo" parameter - verified against vesc_tool's real
+;        config XML, not assumed).
 ;   0x05 CMD_SAVE      [0x05]
 ;   0x06 CMD_LOAD      [0x06]
 ;   0x07 CMD_RESET     [0x07]

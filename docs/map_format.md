@@ -92,8 +92,10 @@ for 441 raw floats, so:
   15..125 hold the packed map (111 slots), 126 holds the brake mode
   (0=off, 1=dual-channel ADC2, 2=bidirectional single-channel ADC1),
   127 holds the brake curve constant (`-5..5`, same range as VESC
-  Tool's own ADC/PPM "Throttle Expo" parameter, used with the native
-  `throttle-curve` extension). See the header
+  Tool's own ADC/PPM "Throttle Expo" parameter, used with
+  `brake-curve-apply` in `throttle.lisp` - a pure-lisp reimplementation
+  of that same curve math, not the native `throttle-curve` extension;
+  see the header comment there for why). See the header
   comment in `storage.lisp` for the exact field order.
 
 `storage-save` writes all of the above then calls `conf-store` once so the
