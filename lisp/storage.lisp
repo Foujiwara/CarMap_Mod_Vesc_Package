@@ -32,8 +32,9 @@
 (defun byte-u (v) (bitwise-and (+ v 128) 0xff))
 (defun byte-s (v) (- (bitwise-and v 0xff) 128))
 
-(defun cell-to-i8 (v) (to-i (* (clamp-f v -1.0 1.0) 100.0)))
-(defun i8-to-cell (v) (/ (to-float v) 100.0))
+; cell-to-i8/i8-to-cell moved to util.lisp (loaded before map.lisp,
+; which needs them too now that map-buf stores i8 cells directly - see
+; the comment there).
 
 (defun storage-save ()
     (progn
@@ -70,13 +71,17 @@
 ; the same way the rest of the firmware persists eeprom data.
 (defun conf-store-quiet () (conf-store))
 
+; map-buf (map.lisp) already stores the quantized i8 value directly at
+; byte offset == flat cell index, so these are now a straight
+; bufget-i8/bufset-i8 with no float round-trip - one less conversion on
+; both the save path (111 slots) and the load path.
 (defun map-cell-flat-i8 (flat-idx)
     (if (< flat-idx map-cells)
-        (cell-to-i8 (bufget-f32 map-buf (* flat-idx 4)))
+        (bufget-i8 map-buf flat-idx)
         0))
 
 (defun map-set-flat (flat-idx val)
-    (if (< flat-idx map-cells) (bufset-f32 map-buf (* flat-idx 4) val) nil))
+    (if (< flat-idx map-cells) (bufset-i8 map-buf flat-idx val) nil))
 
 (defun storage-load ()
     (if (eq (eeprom-read-i 0) eeprom-magic)
@@ -101,10 +106,10 @@
             (looprange s 0 eeprom-map-slots
                 (let ((packed (eeprom-read-i (+ eeprom-map-base s))))
                 (progn
-                    (map-set-flat (+ (* s 4) 0) (i8-to-cell (byte-s (bitwise-and packed 0xff))))
-                    (map-set-flat (+ (* s 4) 1) (i8-to-cell (byte-s (bitwise-and (shr packed 8) 0xff))))
-                    (map-set-flat (+ (* s 4) 2) (i8-to-cell (byte-s (bitwise-and (shr packed 16) 0xff))))
-                    (map-set-flat (+ (* s 4) 3) (i8-to-cell (byte-s (bitwise-and (shr packed 24) 0xff))))
+                    (map-set-flat (+ (* s 4) 0) (byte-s (bitwise-and packed 0xff)))
+                    (map-set-flat (+ (* s 4) 1) (byte-s (bitwise-and (shr packed 8) 0xff)))
+                    (map-set-flat (+ (* s 4) 2) (byte-s (bitwise-and (shr packed 16) 0xff)))
+                    (map-set-flat (+ (* s 4) 3) (byte-s (bitwise-and (shr packed 24) 0xff)))
                 )))
             t)
         nil ; no valid data yet -> caller should generate a default map

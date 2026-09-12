@@ -14,12 +14,20 @@
 
 ## In-RAM representation
 
-`map-buf` is a single LispBM byte array of `21*21*4 = 1764` bytes, storing
-32-bit floats (`bufget-f32`/`bufset-f32`). Reading or writing a cell is one
-`bufget`/`bufset` call - no cons cells, no list traversal, no GC pressure
-in the control loop.
+`map-buf` is a single LispBM byte array of `21*21 = 441` bytes, one
+signed byte per cell (`bufget-i8`/`bufset-i8`, via `cell-to-i8`/
+`i8-to-cell` in `util.lisp` - the same -100..100 = -1.00..1.00, 1%-step
+quantization the eeprom persistence already uses, see below). Reading
+or writing a cell is one `bufget`/`bufset` call - no cons cells, no
+list traversal, no GC pressure in the control loop. This used to be
+32-bit floats (1764 bytes, no quantization until the next save); the
+smaller int8 representation quarters the buffer's memory footprint and
+means a freshly-generated map already has the exact same precision as
+one just reloaded from eeprom, instead of drifting to it only after
+the first save.
 
-Index: `flat = thr_idx * 21 + duty_idx`, byte offset `flat * 4`.
+Index: `flat = thr_idx * 21 + duty_idx`, byte offset `flat` (one byte
+per cell, so index and byte offset are the same number).
 
 ## Bilinear interpolation
 

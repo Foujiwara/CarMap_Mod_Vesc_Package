@@ -1,8 +1,17 @@
 ; map.lisp - the Throttle x Duty -> Current Relative map.
 ;
-; The map lives in RAM as one flat byte array of 32-bit floats so the
-; real-time loop never allocates: reading/writing a cell is two bufget/
-; bufset calls, no lists, no GC pressure.
+; The map lives in RAM as one flat byte array of signed bytes (one per
+; cell, -100..100 = -1.00..1.00 in 1% steps via cell-to-i8/i8-to-cell in
+; util.lisp) so the real-time loop never allocates: reading/writing a
+; cell is one bufget/bufset call, no lists, no GC pressure. This used to
+; be 32-bit floats (4 bytes/cell, no quantization in RAM); switched to
+; match the 1% resolution the eeprom persistence (storage.lisp) already
+; quantizes down to on every save/load, so a freshly-generated map now
+; has the exact same precision as one just reloaded after a reboot
+; instead of being briefly more precise until the next save - and the
+; buffer is 1/4 the size (441 bytes instead of 1764 for 21x21), plus
+; every map-get-cell/map-set-cell call moves 1 byte instead of 4,
+; called from map-lookup up to 200 Hz/4 cells per control-loop tick.
 ;
 ; Grid: THR-N x DUTY-N points, axes 0%..100% inclusive, step = 100/(N-1).
 ; Default 21 x 21 (5% steps). Change THR-N/DUTY-N here to change resolution;
@@ -14,16 +23,15 @@
 (define map-duty-n 21)
 (define map-cells (* map-thr-n map-duty-n))
 
-(define map-buf (array-create (* map-cells 4)))
+(define map-buf (array-create map-cells))
 
 (defun map-idx (thr-i duty-i) (+ (* thr-i map-duty-n) duty-i))
 
 (defun map-get-cell (thr-i duty-i)
-    (bufget-f32 map-buf (* (map-idx thr-i duty-i) 4)))
+    (i8-to-cell (bufget-i8 map-buf (map-idx thr-i duty-i))))
 
 (defun map-set-cell (thr-i duty-i val)
-    (bufset-f32 map-buf (* (map-idx thr-i duty-i) 4)
-                (clamp-f val -1.0 1.0)))
+    (bufset-i8 map-buf (map-idx thr-i duty-i) (cell-to-i8 val)))
 
 ; ---- bilinear interpolation ----------------------------------------------
 ; thr01, duty01 in [0, 1]. duty is expected to already be abs(get-duty).
