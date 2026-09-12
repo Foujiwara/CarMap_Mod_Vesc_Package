@@ -34,6 +34,13 @@
 (define eeprom-map-base 15)
 (define eeprom-map-slots 111)
 
+; Ticks (at control-loop's 200 Hz) for which control-loop skips
+; set-current-rel/timeout-reset entirely - see the comment there and in
+; storage-save. Self-decrementing: control-loop counts this down every
+; tick unconditionally, so it can never stay stuck even if storage-save
+; itself errors partway through.
+(define storage-pause-ticks 0)
+
 (defun pack4 (v0 v1 v2 v3)
     (bitwise-or (bitwise-or (byte-u v0) (shl (byte-u v1) 8))
                 (bitwise-or (shl (byte-u v2) 16) (shl (byte-u v3) 24))))
@@ -47,6 +54,19 @@
 
 (defun storage-save ()
     (progn
+        ; Let the motor genuinely release before touching eeprom at
+        ; all: every eeprom-store-f/i call below waits up to 3s for the
+        ; FOC state to reach MC_STATE_OFF, which can't happen while
+        ; control-loop keeps issuing set-current-rel every 5ms - see
+        ; the comment there. 1000 ticks = 5s at 200 Hz, comfortably
+        ; covering both the time for the firmware's own motor timeout
+        ; to elapse AND the ~126 sequential eeprom-store calls below
+        ; (each one re-triggers its own brief release/wait internally -
+        ; confirmed in mc_interface.c - so control-loop must stay
+        ; paused for the whole save, not just the initial settle).
+        (setq storage-pause-ticks 1000)
+        (sleep 1.5) ; give the initial release time to land before the
+                    ; first eeprom-store call specifically
         (eeprom-store-i 1 thr-cfg-source)
         ; thr-cfg-min/max/deadband/filter are already fp-scale integers
         ; (throttle.lisp) - stored with eeprom-store-i, not -f, and no

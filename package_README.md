@@ -45,11 +45,14 @@ voltage) remain fully in charge.
 4. Pick a preset (Thermal Street / Thermal Race / Wet / Direct Electric)
    or dial in the Configurator parameters yourself, then
    **Apply parameters -> generate map**.
-5. **Save to VESC** so the map and settings survive a reboot. Come to a
-   complete stop first - the VESC's own eeprom write function waits for
-   the motor to release before it will actually write to flash, so a
-   Save made while still moving can silently fail to persist even
-   though the app reports success.
+5. **Save to VESC** so the map and settings survive a reboot, and come
+   to a complete stop first. Saving pauses the control loop's own motor
+   commands for up to ~5 seconds so the VESC's eeprom write can
+   actually complete - it needs the motor controller fully released,
+   which the control loop otherwise prevents just by running (see
+   `docs/map_format.md` if curious). The throttle will not respond
+   during that pause, so treat it like any other firmware update: stay
+   stopped until it's done.
 
 See the Map / Curves / 3D tabs to inspect and hand-edit the map, and the
 live dot to see where you are on it while riding.
