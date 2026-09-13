@@ -29,7 +29,7 @@ Item {
     anchors.fill: parent
     // Bumped on every edit - shown in the header as "build N" so a
     // stale/cached install is obvious at a glance instead of ambiguous.
-    property int buildMarker: 55
+    property int buildMarker: 56
     // Desktop and phone hosts need genuinely different sizing rules, not
     // one compromise value - a cap small enough to avoid overflowing a
     // phone screen leaves desktop far too small, and anything generous
@@ -135,17 +135,6 @@ Item {
         var arr = mapData.slice()
         arr[cellIdx(t, d)] = v
         mapData = arr
-    }
-    // Called on every cell click, not just when focus changes: clicking a
-    // different map cell while editSpin already has focus doesn't fire
-    // onActiveFocusChanged (focus never actually leaves the field), so
-    // relying on that alone only reselects the very first time. Setting
-    // the value and reselecting here happens on every click regardless.
-    function selectCell(t, d) {
-        hoverT = t; hoverD = d
-        editSpin.value = Math.round(getCell(t, d) * 100)
-        if (editSpin.contentItem && editSpin.contentItem.selectAll)
-            editSpin.contentItem.selectAll()
     }
 
     // ---------------------------------------------------------------
@@ -706,7 +695,7 @@ Item {
                         onPressed: (mouse) => {
                             var c = heatmap.cellFromPos(mouse.x, mouse.y)
                             selection = { active: true, t0: c.t, d0: c.d, t1: c.t, d1: c.d }
-                            selectCell(c.t, c.d)
+                            hoverT = c.t; hoverD = c.d
                         }
                         onPositionChanged: (mouse) => {
                             if (!selection.active) return
@@ -715,7 +704,7 @@ Item {
                         }
                         onClicked: (mouse) => {
                             var c = heatmap.cellFromPos(mouse.x, mouse.y)
-                            selectCell(c.t, c.d)
+                            hoverT = c.t; hoverD = c.d
                         }
                     }
 
@@ -918,62 +907,10 @@ Item {
                         SpinBox {
                             id: editSpin
                             from: -100; to: 100; stepSize: 1
-                            editable: true
-                            // Qt's own SpinBox docs recommend an explicit
-                            // IntValidator for a negative `from` - the
-                            // default one is unreliable about accepting a
-                            // leading "-" while typing a negative value.
-                            validator: IntValidator { bottom: -100; top: 100 }
-                            // Not `value: hoverT >= 0 ? ... : 0` - a live
-                            // binding fights every interaction with this
-                            // control: clicking +/- (or typing + Enter)
-                            // writes `value` imperatively, which breaks
-                            // the declarative binding at an unpredictable
-                            // point, then the next mapData change (from
-                            // this very edit, via setCellLocal below)
-                            // could re-trigger it and snap the shown
-                            // value back to whatever it was - looking
-                            // like editing above some cells "refuses" to
-                            // go further. Set the value explicitly once,
-                            // only when the selected cell changes (see
-                            // the MouseArea handlers above), and leave it
-                            // alone otherwise so typing/incrementing is
-                            // never overwritten mid-edit.
+                            value: hoverT >= 0 ? Math.round(getCell(hoverT, hoverD)*100) : 0
                             onValueModified: if (hoverT >= 0) {
                                 setCellLocal(hoverT, hoverD, value/100.0)
                                 sendSetCell(hoverT, hoverD, value/100.0)
-                            }
-                            // Click-to-edit selection is handled by
-                            // selectCell() (called on every map-cell click,
-                            // see the heatmap MouseArea) rather than
-                            // onActiveFocusChanged: clicking a different map
-                            // cell while this field already has focus never
-                            // changes activeFocus, so that signal alone only
-                            // reselects the very first time.
-                            //
-                            // Keyboard +/- step the value like the on-screen
-                            // up/down indicators (arrow keys already do this
-                            // natively). Hooked directly onto the internal
-                            // TextInput's own Keys.pressed (not a
-                            // Keys.onPressed on the SpinBox itself, even
-                            // with Keys.priority: BeforeItem - that did not
-                            // intercept the key before the focused TextInput
-                            // typed it as a literal character) so it fires
-                            // on the actual focused item. event.accepted
-                            // stops it from also being typed - to enter a
-                            // specific negative value, select all and type
-                            // the digits, then use +/- or the indicators/
-                            // scroll wheel to fine-tune from 0.
-                            Component.onCompleted: {
-                                if (contentItem && contentItem.Keys) {
-                                    contentItem.Keys.pressed.connect(function(event) {
-                                        if (event.key === Qt.Key_Plus || event.key === Qt.Key_Equal) {
-                                            increase(); event.accepted = true
-                                        } else if (event.key === Qt.Key_Minus) {
-                                            decrease(); event.accepted = true
-                                        }
-                                    })
-                                }
                             }
                         }
                         Label { text: "%"; color: "#aaa" }
