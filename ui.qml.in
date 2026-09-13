@@ -29,7 +29,7 @@ Item {
     anchors.fill: parent
     // Bumped on every edit - shown in the header as "build N" so a
     // stale/cached install is obvious at a glance instead of ambiguous.
-    property int buildMarker: 54
+    property int buildMarker: 55
     // Desktop and phone hosts need genuinely different sizing rules, not
     // one compromise value - a cap small enough to avoid overflowing a
     // phone screen leaves desktop far too small, and anything generous
@@ -135,6 +135,17 @@ Item {
         var arr = mapData.slice()
         arr[cellIdx(t, d)] = v
         mapData = arr
+    }
+    // Called on every cell click, not just when focus changes: clicking a
+    // different map cell while editSpin already has focus doesn't fire
+    // onActiveFocusChanged (focus never actually leaves the field), so
+    // relying on that alone only reselects the very first time. Setting
+    // the value and reselecting here happens on every click regardless.
+    function selectCell(t, d) {
+        hoverT = t; hoverD = d
+        editSpin.value = Math.round(getCell(t, d) * 100)
+        if (editSpin.contentItem && editSpin.contentItem.selectAll)
+            editSpin.contentItem.selectAll()
     }
 
     // ---------------------------------------------------------------
@@ -695,8 +706,7 @@ Item {
                         onPressed: (mouse) => {
                             var c = heatmap.cellFromPos(mouse.x, mouse.y)
                             selection = { active: true, t0: c.t, d0: c.d, t1: c.t, d1: c.d }
-                            hoverT = c.t; hoverD = c.d
-                            editSpin.value = Math.round(getCell(c.t, c.d) * 100)
+                            selectCell(c.t, c.d)
                         }
                         onPositionChanged: (mouse) => {
                             if (!selection.active) return
@@ -705,8 +715,7 @@ Item {
                         }
                         onClicked: (mouse) => {
                             var c = heatmap.cellFromPos(mouse.x, mouse.y)
-                            hoverT = c.t; hoverD = c.d
-                            editSpin.value = Math.round(getCell(c.t, c.d) * 100)
+                            selectCell(c.t, c.d)
                         }
                     }
 
@@ -934,28 +943,36 @@ Item {
                                 setCellLocal(hoverT, hoverD, value/100.0)
                                 sendSetCell(hoverT, hoverD, value/100.0)
                             }
-                            // Click-to-edit convention: the whole value is
-                            // selected as soon as the field gets focus, so
-                            // typing immediately replaces it instead of
-                            // inserting into the middle of the old number.
-                            onActiveFocusChanged: if (activeFocus && contentItem && contentItem.selectAll)
-                                contentItem.selectAll()
+                            // Click-to-edit selection is handled by
+                            // selectCell() (called on every map-cell click,
+                            // see the heatmap MouseArea) rather than
+                            // onActiveFocusChanged: clicking a different map
+                            // cell while this field already has focus never
+                            // changes activeFocus, so that signal alone only
+                            // reselects the very first time.
+                            //
                             // Keyboard +/- step the value like the on-screen
                             // up/down indicators (arrow keys already do this
-                            // natively). Accepting the event here stops it
-                            // from also being typed as a literal character -
-                            // to type a specific negative value, select all
-                            // and type the digits, then use +/- or the
-                            // indicators/scroll wheel to fine-tune from 0.
-                            // BeforeItem: without this, the focused internal
-                            // TextInput consumes +/- as a typed character
-                            // before this handler ever sees the event.
-                            Keys.priority: Keys.BeforeItem
-                            Keys.onPressed: (event) => {
-                                if (event.key === Qt.Key_Plus || event.key === Qt.Key_Equal) {
-                                    increase(); event.accepted = true
-                                } else if (event.key === Qt.Key_Minus) {
-                                    decrease(); event.accepted = true
+                            // natively). Hooked directly onto the internal
+                            // TextInput's own Keys.pressed (not a
+                            // Keys.onPressed on the SpinBox itself, even
+                            // with Keys.priority: BeforeItem - that did not
+                            // intercept the key before the focused TextInput
+                            // typed it as a literal character) so it fires
+                            // on the actual focused item. event.accepted
+                            // stops it from also being typed - to enter a
+                            // specific negative value, select all and type
+                            // the digits, then use +/- or the indicators/
+                            // scroll wheel to fine-tune from 0.
+                            Component.onCompleted: {
+                                if (contentItem && contentItem.Keys) {
+                                    contentItem.Keys.pressed.connect(function(event) {
+                                        if (event.key === Qt.Key_Plus || event.key === Qt.Key_Equal) {
+                                            increase(); event.accepted = true
+                                        } else if (event.key === Qt.Key_Minus) {
+                                            decrease(); event.accepted = true
+                                        }
+                                    })
                                 }
                             }
                         }
