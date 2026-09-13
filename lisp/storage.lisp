@@ -1,182 +1,190 @@
-; storage.lisp - persist the map + config to the emulated eeprom
-; (eeprom-store-f / eeprom-store-i, addresses 0..127, see bldc lispBM docs).
-;
-; Layout (see docs/map_format.md for the authoritative version):
-;   0   magic/version (i32)              - EEPROM-MAGIC when valid data present
-;   1   throttle source (i32)
-;   2   throttle min, fp-scale (i32)     - see util.lisp; was f32 before
-;   3   throttle max, fp-scale (i32)     ; the fixed-point rewrite, bumped
-;   4   invert(bit0) | deadband fp-scale (bits 8..31) (i32) ; eeprom-magic
-;   5   throttle filter alpha, fp-scale (i32) ; below to force a fresh reset
-;   6   preset id (i32)
-;   7   torque response (f32)
-;   8   speed coupling (f32)
-;   9   transition width (f32)
-;   10  transition shape (i32)
-;   11  high throttle hold (f32)
-;   12  engine braking (f32)
-;   13  overrun regen (f32)
-;   14  regen curve (i32)
-;   15..125  map cells, 4 int8 (offset +128, i.e. -100..100 -> 0..255-ish) packed per i32
-;            111 slots * 4 = 444 >= 441 cells
-;   126 brake mode (i32, 0=off 1=dual-channel ADC2 2=bidirectional ADC1)
+; EEPROM layout remains compatible with 20260912; slot 127 now holds
+; CRC16 of slots 0..126 (big-endian words). New saves use 20260913.
+; Only complete, validated images are applied to the live state.
+(define storage-busy nil)
 
-; Bumped from 20260911: addresses 2/3/4/5 changed from f32 (IEEE-754
-; bit pattern) to plain fp-scale i32 (throttle.lisp's fixed-point
-; rewrite) - a different byte representation entirely, so a device with
-; an old save must NOT have it reinterpreted as the new format (it
-; would decode to nonsense min/max/deadband/filter values). Bumping the
-; magic makes storage-load correctly treat any pre-existing save as "no
-; valid data" and fall through to storage-reset instead - a one-time
-; reset of calibration/map/brake-mode back to defaults on first boot
-; with this version, which is far safer than silently misreading bytes.
-(define eeprom-magic 20260912)
+@const-start
+(define eeprom-magic 20260913)
+(define eeprom-legacy-magic 20260912)
 (define eeprom-map-base 15)
 (define eeprom-map-slots 111)
 
-; Ticks (at control-loop's 200 Hz) for which control-loop skips
-; set-current-rel/timeout-reset entirely - see the comment there and in
-; storage-save. Self-decrementing: control-loop counts this down every
-; tick unconditionally, so it can never stay stuck even if storage-save
-; itself errors partway through.
-(define storage-pause-ticks 0)
+; Avoid firmware versions where bufget-i32 narrows to a 28-bit fixnum.
+(defun storage-buffer-i32 (b offset) (to-i32 (bufget-u32 b offset)))
 
+; Promote BEFORE shifting: plain LispBM integers have only 28 bits on VESC.
 (defun pack4 (v0 v1 v2 v3)
-    (bitwise-or (bitwise-or (byte-u v0) (shl (byte-u v1) 8))
-                (bitwise-or (shl (byte-u v2) 16) (shl (byte-u v3) 24))))
+    (bitwise-or
+        (bitwise-or (to-u32 (+ v0 128)) (shl (to-u32 (+ v1 128)) 8))
+        (bitwise-or (shl (to-u32 (+ v2 128)) 16) (shl (to-u32 (+ v3 128)) 24))))
 
-(defun byte-u (v) (bitwise-and (+ v 128) 0xff))
-(defun byte-s (v) (- (bitwise-and v 0xff) 128))
+(defun map-cell-flat-i8 (i)
+    (if (< i map-cells) (bufget-i8 map-buf i) 0))
 
-; cell-to-i8/i8-to-cell moved to util.lisp (loaded before map.lisp,
-; which needs them too now that map-buf stores i8 cells directly - see
-; the comment there).
+(defun storage-image ()
+    (let ((b (array-create 508)))
+        (progn (bufset-i32 b 0 eeprom-magic)
+        (bufset-i32 b 4 thr-cfg-source)
+        (bufset-i32 b 8 thr-cfg-min)
+        (bufset-i32 b 12 thr-cfg-max)
+        (bufset-i32 b 16 (bitwise-or thr-cfg-invert (shl thr-cfg-deadband 8)))
+        (bufset-i32 b 20 thr-cfg-filter)
+        (bufset-i32 b 24 cfg-preset)
+        (bufset-f32 b 28 cfg-torque-resp)
+        (bufset-f32 b 32 cfg-speed-coupling)
+        (bufset-f32 b 36 cfg-trans-width)
+        (bufset-i32 b 40 cfg-trans-shape)
+        (bufset-f32 b 44 cfg-high-hold)
+        (bufset-f32 b 48 cfg-engine-brake)
+        (bufset-f32 b 52 cfg-overrun-regen)
+        (bufset-i32 b 56 cfg-regen-curve)
+        (bufset-i32 b 504 thr-cfg-brake-mode)
+        (looprange s 0 eeprom-map-slots
+            (bufset-u32 b (+ 60 (* s 4))
+                (pack4 (map-cell-flat-i8 (* s 4))
+                       (map-cell-flat-i8 (+ (* s 4) 1))
+                       (map-cell-flat-i8 (+ (* s 4) 2))
+                       (map-cell-flat-i8 (+ (* s 4) 3)))))
+        b)))
+
+; Readback is mandatory: some firmware paths return true without writing
+; if motor release times out. Unchanged slots incur no flash writes.
+(defun storage-write-word (addr value)
+    (let ((old (eeprom-read-i addr)))
+        (if (and (number? old) (= old value))
+            t
+            (and (eeprom-store-i addr value)
+                (let ((actual (eeprom-read-i addr)))
+                    (and (number? actual) (= actual value)))))))
+
+(defun storage-write-image (b)
+    (let ((checksum (crc16 b)) (same t))
+        (progn (looprange s 0 127
+            (let ((old (eeprom-read-i s)))
+                (if (not (and (number? old) (= old (storage-buffer-i32 b (* s 4)))))
+                    (setq same nil))))
+        (if (and same (let ((old (eeprom-read-i 127)))
+                          (and (number? old) (= old checksum))))
+            t
+            ; Invalidate FIRST, commit marker LAST. A power failure leaves
+            ; an invalid image, never a mix of old and new settings.
+            (and (storage-write-word 0 0)
+                (let ((ok t))
+                    (progn (looprange s 1 127
+                        (if ok
+                            (setq ok (storage-write-word s (storage-buffer-i32 b (* s 4))))))
+                    (and ok (storage-write-word 127 checksum)
+                         (storage-write-word 0 eeprom-magic)))))))))
 
 (defun storage-save ()
     (progn
-        ; mc_interface_release_motor_override_both (called internally by
-        ; every eeprom-store-f/i call, confirmed in mc_interface.c) is
-        ; an EXPLICIT, IMMEDIATE release (mcpwm_foc_release_motor()) -
-        ; it does NOT wait for the VESC's configured motor timeout to
-        ; elapse naturally. The only thing that can stop it from taking
-        ; effect is *this script itself* immediately re-asserting
-        ; set-current-rel again from control-loop before the very next
-        ; eeprom-store call's poll notices the release - so the fix is
-        ; purely "stop calling set-current-rel for the whole save",
-        ; nothing more: storage-pause-ticks below makes control-loop
-        ; skip it entirely, and this brief settle sleep just gives that
-        ; a moment to take effect before the first eeprom-store call.
-        (setq storage-pause-ticks 3000) ; ~15s ceiling at 200 Hz - generous
-                                         ; safety margin, not an expected
-                                         ; duration; self-decrements in
-                                         ; control-loop regardless of
-                                         ; what happens here, so it can't
-                                         ; get stuck even on an error
-        (sleep 0.3)
-        (eeprom-store-i 1 thr-cfg-source)
-        ; thr-cfg-min/max/deadband/filter are already fp-scale integers
-        ; (throttle.lisp) - stored with eeprom-store-i, not -f, and no
-        ; *1000 scaling here since they're already at that scale.
-        (eeprom-store-i 2 thr-cfg-min)
-        (eeprom-store-i 3 thr-cfg-max)
-        (eeprom-store-i 4 (bitwise-or thr-cfg-invert (shl thr-cfg-deadband 8)))
-        (eeprom-store-i 5 thr-cfg-filter)
-        (eeprom-store-i 6 cfg-preset)
-        (eeprom-store-f 7 cfg-torque-resp)
-        (eeprom-store-f 8 cfg-speed-coupling)
-        (eeprom-store-f 9 cfg-trans-width)
-        (eeprom-store-i 10 cfg-trans-shape)
-        (eeprom-store-f 11 cfg-high-hold)
-        (eeprom-store-f 12 cfg-engine-brake)
-        (eeprom-store-f 13 cfg-overrun-regen)
-        (eeprom-store-i 14 cfg-regen-curve)
-        (eeprom-store-i 126 thr-cfg-brake-mode)
-        (looprange s 0 eeprom-map-slots
-            (let ((c0 (+ (* s 4) 0)) (c1 (+ (* s 4) 1))
-                  (c2 (+ (* s 4) 2)) (c3 (+ (* s 4) 3)))
-            (eeprom-store-i (+ eeprom-map-base s)
-                (pack4 (map-cell-flat-i8 c0) (map-cell-flat-i8 c1)
-                       (map-cell-flat-i8 c2) (map-cell-flat-i8 c3)))
-            ))
-        (eeprom-store-i 0 eeprom-magic)
-        (conf-store-quiet)
-        t
-    ))
+        (setq storage-busy t)
+        (sleep 0.01)
+        (let ((result (trap (storage-write-image (storage-image)))))
+            (progn (setq storage-busy nil)
+            (eq result '(exit-ok t))))))
 
-; conf-store also stores motor/app config; we only touch our own eeprom
-; range, but call conf-store so the eeprom write is committed to flash
-; the same way the rest of the firmware persists eeprom data.
-(defun conf-store-quiet () (conf-store))
+; Range checks reject missing fields, NaNs, corrupt calibration and maps.
+(defun storage-image-valid (b)
+    (and
+        (in-range (storage-buffer-i32 b 4) 0 3)
+        (in-range (storage-buffer-i32 b 8) 0 1000)
+        (in-range (storage-buffer-i32 b 12) 0 1000)
+        (< (storage-buffer-i32 b 8) (storage-buffer-i32 b 12))
+        (= (bitwise-and (storage-buffer-i32 b 16) 0xfe) 0)
+        (in-range (shr (storage-buffer-i32 b 16) 8) 0 999)
+        (in-range (storage-buffer-i32 b 20) 1 1000)
+        (in-range (storage-buffer-i32 b 24) 0 4)
+        (in-range (bufget-f32 b 28) 0.3 2.0)
+        (in-range (bufget-f32 b 32) 0.0 1.5)
+        (in-range (bufget-f32 b 36) 0.02 0.30)
+        (in-range (storage-buffer-i32 b 40) 0 3)
+        (in-range (bufget-f32 b 44) 0.0 1.0)
+        (in-range (bufget-f32 b 48) 0.0 0.6)
+        (in-range (bufget-f32 b 52) 0.0 0.5)
+        (in-range (storage-buffer-i32 b 56) 0 3)
+        (in-range (storage-buffer-i32 b 504) 0 2)
+        (let ((ok t))
+            (progn (looprange i 0 map-cells
+                (if (not (in-range (storage-image-cell b i) -100 100))
+                    (setq ok nil)))
+            ok))))
 
-; map-buf (map.lisp) already stores the quantized i8 value directly at
-; byte offset == flat cell index, so these are now a straight
-; bufget-i8/bufset-i8 with no float round-trip - one less conversion on
-; both the save path (111 slots) and the load path.
-(defun map-cell-flat-i8 (flat-idx)
-    (if (< flat-idx map-cells)
-        (bufget-i8 map-buf flat-idx)
-        0))
+(defun storage-image-cell (b i)
+    ; Packed slot's least significant byte is the first cell.
+    (- (bufget-u8 b (+ 60 (* (/ i 4) 4) (- 3 (mod i 4)))) 128))
 
-(defun map-set-flat (flat-idx val)
-    (if (< flat-idx map-cells) (bufset-i8 map-buf flat-idx val) nil))
+(defun storage-apply-image (b)
+    (progn
+        (setq thr-cfg-source (to-i (storage-buffer-i32 b 4)))
+        (setq thr-cfg-min (to-i (storage-buffer-i32 b 8)))
+        (setq thr-cfg-max (to-i (storage-buffer-i32 b 12)))
+        (setq thr-cfg-filter (to-i (storage-buffer-i32 b 20)))
+        (setq cfg-preset (to-i (storage-buffer-i32 b 24)))
+        (setq cfg-torque-resp (bufget-f32 b 28))
+        (setq cfg-speed-coupling (bufget-f32 b 32))
+        (setq cfg-trans-width (bufget-f32 b 36))
+        (setq cfg-trans-shape (to-i (storage-buffer-i32 b 40)))
+        (setq cfg-high-hold (bufget-f32 b 44))
+        (setq cfg-engine-brake (bufget-f32 b 48))
+        (setq cfg-overrun-regen (bufget-f32 b 52))
+        (setq cfg-regen-curve (to-i (storage-buffer-i32 b 56)))
+        (setq thr-cfg-brake-mode (to-i (storage-buffer-i32 b 504)))
+        (setq thr-cfg-invert (to-i (bitwise-and (storage-buffer-i32 b 16) 1)))
+        (setq thr-cfg-deadband (to-i (shr (storage-buffer-i32 b 16) 8)))
+        (looprange i 0 map-cells
+            (bufset-i8 map-buf i (storage-image-cell b i)))
+        (thr-reset-state)
+        t))
+
+(defun storage-read-image ()
+    (let ((magic (eeprom-read-i 0)))
+        ; eq would reject the i32 returned by EEPROM against a plain integer.
+        (if (and (number? magic)
+                 (or (= magic eeprom-magic) (= magic eeprom-legacy-magic)))
+            (let ((b (array-create 508)) (ok t))
+                (progn (looprange s 0 127
+                    (let ((v (eeprom-read-i s)))
+                        (if (number? v)
+                            (bufset-i32 b (* s 4) v)
+                            (setq ok nil))))
+                (if (and ok (storage-image-valid b)
+                         (or (= magic eeprom-legacy-magic)
+                             (let ((sum (eeprom-read-i 127)))
+                                 (and (number? sum) (= sum (crc16 b))))))
+                    (storage-apply-image b)
+                    nil)))
+            nil)))
 
 (defun storage-load ()
-    (if (eq (eeprom-read-i 0) eeprom-magic)
-        (progn
-            (define thr-cfg-source (eeprom-read-i 1))
-            (define thr-cfg-min (eeprom-read-i 2))
-            (define thr-cfg-max (eeprom-read-i 3))
-            (let ((packed (eeprom-read-i 4)))
-                (define thr-cfg-invert (bitwise-and packed 1))
-                (define thr-cfg-deadband (shr packed 8)))
-            (define thr-cfg-filter (eeprom-read-i 5))
-            (define cfg-preset (eeprom-read-i 6))
-            (define cfg-torque-resp (eeprom-read-f 7))
-            (define cfg-speed-coupling (eeprom-read-f 8))
-            (define cfg-trans-width (eeprom-read-f 9))
-            (define cfg-trans-shape (eeprom-read-i 10))
-            (define cfg-high-hold (eeprom-read-f 11))
-            (define cfg-engine-brake (eeprom-read-f 12))
-            (define cfg-overrun-regen (eeprom-read-f 13))
-            (define cfg-regen-curve (eeprom-read-i 14))
-            (define thr-cfg-brake-mode (eeprom-read-i 126))
-            (looprange s 0 eeprom-map-slots
-                (let ((packed (eeprom-read-i (+ eeprom-map-base s))))
-                (progn
-                    (map-set-flat (+ (* s 4) 0) (byte-s (bitwise-and packed 0xff)))
-                    (map-set-flat (+ (* s 4) 1) (byte-s (bitwise-and (shr packed 8) 0xff)))
-                    (map-set-flat (+ (* s 4) 2) (byte-s (bitwise-and (shr packed 16) 0xff)))
-                    (map-set-flat (+ (* s 4) 3) (byte-s (bitwise-and (shr packed 24) 0xff)))
-                )))
-            t)
-        nil ; no valid data yet -> caller should generate a default map
-    ))
+    (progn
+        (setq storage-busy t)
+        (sleep 0.01)
+        (let ((result (trap (storage-read-image))))
+            (progn (setq storage-busy nil)
+            (eq result '(exit-ok t))))))
 
-; Defaults match the "Thermal Street" preset (id 1) in ui.qml.in, so a
-; brand new install already feels sane before anyone opens the
-; Configurator tab.
 (defun storage-reset ()
     (progn
-        (define cfg-preset 1)
-        (define cfg-torque-resp 0.85)
-        (define cfg-speed-coupling 1.0)
-        (define cfg-trans-width 0.10)
-        (define cfg-trans-shape 1)
-        (define cfg-high-hold 0.55)
-        (define cfg-engine-brake 0.15)
-        (define cfg-overrun-regen 0.12)
-        (define cfg-regen-curve 1)
-        (define thr-cfg-source thr-src-adc)
-        (define thr-cfg-invert 0)
-        (define thr-cfg-min 20)     ; 0.02, fp-scale (throttle.lisp)
-        (define thr-cfg-max 980)    ; 0.98
-        (define thr-cfg-deadband 20) ; 0.02
-        (define thr-cfg-filter 1000) ; no filtering by default - see
-                                     ; throttle.lisp, filtering felt like
-                                     ; input latency on real hardware
-        (define thr-cfg-brake-mode 0)
+        (setq cfg-preset 1)
+        (setq cfg-torque-resp 0.85)
+        (setq cfg-speed-coupling 1.0)
+        (setq cfg-trans-width 0.10)
+        (setq cfg-trans-shape 1)
+        (setq cfg-high-hold 0.55)
+        (setq cfg-engine-brake 0.15)
+        (setq cfg-overrun-regen 0.12)
+        (setq cfg-regen-curve 1)
+        (setq thr-cfg-source thr-src-adc)
+        (setq thr-cfg-invert 0)
+        (setq thr-cfg-min 20)
+        (setq thr-cfg-max 980)
+        (setq thr-cfg-deadband 20)
+        (setq thr-cfg-filter 1000)
+        (setq thr-cfg-brake-mode 0)
+        (thr-reset-state)
         (gen-thermal-map cfg-torque-resp cfg-speed-coupling cfg-trans-width
-                          cfg-trans-shape cfg-high-hold cfg-engine-brake
-                          cfg-overrun-regen cfg-regen-curve)
-        t
-    ))
+                         cfg-trans-shape cfg-high-hold cfg-engine-brake
+                         cfg-overrun-regen cfg-regen-curve)
+        t))
+@const-end

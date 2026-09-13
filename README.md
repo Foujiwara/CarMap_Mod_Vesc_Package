@@ -10,8 +10,8 @@ a thermal-engine powertrain instead of a flat electric current curve.
 - negative = regen / motor braking, `-1.0` = 100% of configured negative current
 
 The map is independent of the actual amps configured on the VESC, and the
-final motor command is always `set-current-rel` - **never** a duty-cycle
-command - so every native VESC protection (current/ERPM/duty/temperature/
+motor commands use `set-current-rel` for propulsion and `set-brake-rel`
+for braking. Every native VESC protection (current/ERPM/duty/temperature/
 voltage limits) stays fully in control.
 
 ![status](https://img.shields.io/badge/status-first_working_version-blue)
@@ -22,8 +22,7 @@ voltage limits) stays fully in control.
 - Throttle source: ADC, PPM or UART, with min/max/deadband/invert/filter
   calibration and a clean seam for adding more sources later.
 - 21x21 Throttle x Duty grid, bilinear interpolation, ~200 Hz control
-  loop, entirely in LispBM (see [docs/architecture.md](docs/architecture.md)
-  for why C wasn't needed here).
+  loop, entirely in LispBM (see [docs/architecture.md](docs/architecture.md)).
 - Automatic map generator with 4 presets (Thermal Street, Thermal Race,
   Wet, Direct Electric) plus 8 free parameters (torque response, speed
   coupling, transition width/shape, high-throttle hold, engine braking,
@@ -33,7 +32,7 @@ voltage limits) stays fully in control.
   column editing (bump %, smooth, copy/paste, interpolate a selection),
   and text-based export/import.
 - Persisted on the VESC itself (emulated eeprom), survives VESC Tool
-  disconnects and controller reboots - see [docs/map_format.md](docs/map_format.md#persistence-storagelisp).
+  disconnects and controller reboots - see [docs/map_format.md](docs/map_format.md#eeprom-layout).
 - A compact, package-private binary protocol between QML and LispBM - see
   [docs/protocol.md](docs/protocol.md).
 
@@ -49,6 +48,11 @@ docs/        architecture.md, protocol.md, map_format.md
 See [docs/architecture.md](docs/architecture.md) for the full breakdown.
 
 ## Building the `.vescpkg`
+
+Windows: `./build.ps1 -VescTool 'C:/path/to/vesc_tool.exe'`.
+
+Version 0.1.52 includes the [code audit and fixes](docs/audit-2026-09-12.md).
+See [tests/README.md](tests/README.md) for repeatable 32-bit LispBM and UI tests.
 
 This repo follows the same build convention as the official packages in
 [vedderb/vesc_pkg](https://github.com/vedderb/vesc_pkg) (e.g. `refloat/`):
