@@ -29,7 +29,7 @@ Item {
     anchors.fill: parent
     // Bumped on every edit - shown in the header as "build N" so a
     // stale/cached install is obvious at a glance instead of ambiguous.
-    property int buildMarker: 53
+    property int buildMarker: 54
     // Desktop and phone hosts need genuinely different sizing rules, not
     // one compromise value - a cap small enough to avoid overflowing a
     // phone screen leaves desktop far too small, and anything generous
@@ -933,6 +933,30 @@ Item {
                             onValueModified: if (hoverT >= 0) {
                                 setCellLocal(hoverT, hoverD, value/100.0)
                                 sendSetCell(hoverT, hoverD, value/100.0)
+                            }
+                            // Click-to-edit convention: the whole value is
+                            // selected as soon as the field gets focus, so
+                            // typing immediately replaces it instead of
+                            // inserting into the middle of the old number.
+                            onActiveFocusChanged: if (activeFocus && contentItem && contentItem.selectAll)
+                                contentItem.selectAll()
+                            // Keyboard +/- step the value like the on-screen
+                            // up/down indicators (arrow keys already do this
+                            // natively). Accepting the event here stops it
+                            // from also being typed as a literal character -
+                            // to type a specific negative value, select all
+                            // and type the digits, then use +/- or the
+                            // indicators/scroll wheel to fine-tune from 0.
+                            // BeforeItem: without this, the focused internal
+                            // TextInput consumes +/- as a typed character
+                            // before this handler ever sees the event.
+                            Keys.priority: Keys.BeforeItem
+                            Keys.onPressed: (event) => {
+                                if (event.key === Qt.Key_Plus || event.key === Qt.Key_Equal) {
+                                    increase(); event.accepted = true
+                                } else if (event.key === Qt.Key_Minus) {
+                                    decrease(); event.accepted = true
+                                }
                             }
                         }
                         Label { text: "%"; color: "#aaa" }
