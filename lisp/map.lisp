@@ -1,169 +1,62 @@
-; map.lisp - the Throttle x Duty -> Current Relative map.
-;
-; The map lives in RAM as one flat byte array of signed bytes (one per
-; cell, -100..100 = -1.00..1.00 in 1% steps via cell-to-i8/i8-to-cell in
-; util.lisp) so the real-time loop never allocates: reading/writing a
-; cell is one bufget/bufset call, no lists, no GC pressure. This used to
-; be 32-bit floats (4 bytes/cell, no quantization in RAM); switched to
-; match the 1% resolution the eeprom persistence (storage.lisp) already
-; quantizes down to on every save/load, so a freshly-generated map now
-; has the exact same precision as one just reloaded after a reboot
-; instead of being briefly more precise until the next save - and the
-; buffer is 1/4 the size (441 bytes instead of 1764 for 21x21), plus
-; every map-get-cell/map-set-cell call moves 1 byte instead of 4,
-; called from map-lookup up to 200 Hz/4 cells per control-loop tick.
-;
-; Grid: THR-N x DUTY-N points, axes 0%..100% inclusive, step = 100/(N-1).
-; Default 21 x 21 (5% steps). Change THR-N/DUTY-N here to change resolution;
-; everything else (index math, storage packing, protocol row size) derives
-; from these two constants except the wire packet size in protocol.lisp
-; (21 values/row), which should be updated to match DUTY-N if you resize.
-;
-; Confirmed on real hardware (v0.1.49): this file crashed (type_error,
-; "v UNDEFINED" in bufset-i8) when flash-resident and calling
-; util.lisp's clamp-f/clamp01/max-f/to-fp/cell-to-i8/i8-to-cell, which
-; are themselves flash-resident in util.lisp's own SEPARATE
-; @const-start block - a flash function in one file calling a flash
-; function in a DIFFERENT file's own block breaks parameter binding
-; resolution on this firmware. Calling a flash function from normal
-; (non-flash) code remains confirmed safe.
-;
-; Fix: this file now has its own private, self-contained copies of
-; every helper it needs (mp-clamp-f/mp-clamp01/mp-max-f/mp-to-fp/
-; mp-cell-to-i8/mp-i8-to-cell/mp-fp-scale below, `mp-` for "map" to
-; keep them clearly distinct from util.lisp's originals rather than
-; silently redefining those same global names) - nothing in this
-; file's own @const-start block calls out to another file's block
-; anymore, only itself and native extensions.
+; Signed-byte cells stay in RAM; code and immutable constants live in flash.
 @const-start
-
-; Private copies of util.lisp's helpers - see the file header comment
-; for why these exist instead of calling util.lisp directly. Kept
-; identical in behavior to their util.lisp counterparts.
-(define mp-fp-scale 1000)
-(defun mp-clamp-f (v lo hi) (if (< v lo) lo (if (> v hi) hi v)))
-(defun mp-clamp01 (v) (mp-clamp-f v 0.0 1.0))
-(defun mp-max-f (a b) (if (> a b) a b))
-(defun mp-to-fp (raw) (to-i (* raw 1000.0)))
-(defun mp-cell-to-i8 (v) (mp-clamp-f (/ v 10) -100 100))
-(defun mp-i8-to-cell (v) (* v 10))
-
 (define map-thr-n 21)
 (define map-duty-n 21)
-(define map-cells (* map-thr-n map-duty-n))
-
+(define map-cells 441)
+@const-end
 (define map-buf (array-create map-cells))
+@const-start
+(defun map-idx (t-i d-i) (+ (* t-i 21) d-i))
+(defun map-get-cell (t-i d-i) (* (bufget-i8 map-buf (map-idx t-i d-i)) 10))
+(defun map-set-cell (t-i d-i val)
+    (bufset-i8 map-buf (map-idx t-i d-i) (cell-to-i8 val)))
 
-(defun map-idx (thr-i duty-i) (+ (* thr-i map-duty-n) duty-i))
+; All intermediates fit the VESC's signed 28-bit inline integer.
+(defun map-lookup (thr duty)
+    (let ((tf (* (clamp-f thr 0 1000) 20))
+          (df (* (clamp-f duty 0 1000) 20))
+          (t0 (/ tf 1000)) (d0 (/ df 1000))
+          (t1 (min-f (+ t0 1) 20)) (d1 (min-f (+ d0 1) 20))
+          (tw (mod tf 1000)) (dw (mod df 1000))
+          (v00 (map-get-cell t0 d0)) (v01 (map-get-cell t0 d1))
+          (v10 (map-get-cell t1 d0)) (v11 (map-get-cell t1 d1))
+          (v0 (+ v00 (/ (* (- v01 v00) dw) 1000)))
+          (v1 (+ v10 (/ (* (- v11 v10) dw) 1000))))
+        (+ v0 (/ (* (- v1 v0) tw) 1000))))
 
-(defun map-get-cell (thr-i duty-i)
-    (mp-i8-to-cell (bufget-i8 map-buf (map-idx thr-i duty-i))))
+(defun thermal-peak (thr response hold)
+    (let ((base (pow thr response)))
+        (+ base (* (- thr base) hold (clamp01 (/ (- thr 0.6) 0.4))))))
 
-(defun map-set-cell (thr-i duty-i val)
-    (bufset-i8 map-buf (map-idx thr-i duty-i) (mp-cell-to-i8 val)))
-
-; ---- bilinear interpolation ----------------------------------------------
-; thr01, duty01 in fp-scale (0..1000, see util.lisp) - integer, not
-; float. duty is expected to already be abs(get-duty), converted to
-; fp-scale by the caller (control-loop). Every operation here
-; (add/sub/mul/div/compare between two plain integers) stays in
-; LispBM's zero-cost inline integer type instead of boxing a float on
-; the heap for every intermediate result, which is what this did before
-; and was the confirmed cause of high heap usage on real hardware at
-; 200 Hz (see util.lisp's fp-scale comment for the lispBM heap.c
-; evidence). Returns fp-scale too (-1000..1000): the caller converts to
-; a real float only once, right before set-current-rel, the one place a
-; float genuinely can't be avoided.
-;
-; A single `let` in LispBM allows mutually-referencing bindings (see the
-; "let" chapter of the LispBM reference), so this is one environment
-; frame instead of five nested ones.
-(defun map-lookup (thr01 duty01)
-    (let ((tf (* (mp-clamp-f thr01 0 mp-fp-scale) (- map-thr-n 1)))
-          (df (* (mp-clamp-f duty01 0 mp-fp-scale) (- map-duty-n 1)))
-          (t0 (/ tf mp-fp-scale))
-          (d0 (/ df mp-fp-scale))
-          (t1 (if (< t0 (- map-thr-n 1)) (+ t0 1) t0))
-          (d1 (if (< d0 (- map-duty-n 1)) (+ d0 1) d0))
-          (tw (- tf (* t0 mp-fp-scale)))
-          (dw (- df (* d0 mp-fp-scale)))
-          (v00 (map-get-cell t0 d0))
-          (v01 (map-get-cell t0 d1))
-          (v10 (map-get-cell t1 d0))
-          (v11 (map-get-cell t1 d1))
-          (v0 (+ v00 (/ (* (- v01 v00) dw) mp-fp-scale)))
-          (v1 (+ v10 (/ (* (- v11 v10) dw) mp-fp-scale))))
-    (+ v0 (/ (* (- v1 v0) tw) mp-fp-scale))
-    ))
-
-; ---- default map generator (Thermal Street) -------------------------------
-; Mirrors the QML configurator formulas (see docs/map_format.md) so the
-; package behaves sanely even before VESC Tool has ever connected.
-;
-; Deliberately still float internally (thermal-peak/thermal-cell below
-; use `pow`, which has no cheap fixed-point equivalent worth the risk
-; of changing the map's actual shape) - unlike map-lookup, this only
-; runs once at boot or when a preset/parameter changes, not every
-; control-loop tick, so its float cost is a one-time transient burst,
-; not a continuous per-tick tax. map-set-cell is the only place the
-; float result crosses into the integer/fp-scale domain the rest of
-; the map (and the hot path) now lives in - to-fp does that conversion.
-(defun gen-thermal-map (torque-resp speed-coupling trans-width trans-shape
-                         high-hold engine-brake overrun-regen regen-curve)
-    (looprange ti 0 map-thr-n
-        (let ((thr (/ (to-float ti) (to-float (- map-thr-n 1))))
-              (peak (thermal-peak thr torque-resp high-hold))
-              (balance-duty (thermal-balance-duty thr speed-coupling)))
-        (looprange di 0 map-duty-n
-            (let ((duty (/ (to-float di) (to-float (- map-duty-n 1)))))
-            (map-set-cell ti di
-                (mp-to-fp (thermal-cell thr duty peak balance-duty trans-width
-                                      trans-shape engine-brake overrun-regen regen-curve)))
-            ))
-        )))
-
-; Peak current-rel requested at this throttle, before duty shaping.
-; torque-resp < 1.0 = progressive (concave), 1.0 = linear, > 1.0 = aggressive.
-(defun thermal-peak (thr torque-resp high-hold)
-    (let ((base (pow thr torque-resp)))
-    ; high-hold (0..1) keeps top-end throttle closer to full peak: blend
-    ; base toward `thr` itself as thr approaches 1.0.
-    (+ base (* (- thr base) high-hold (thermal-smooth thr)))
-    ))
-
-; smoothstep-ish weighting that only kicks in above ~60% throttle so
-; high-hold shapes the top of the curve, not the low/mid range.
-(defun thermal-smooth (thr)
-    (mp-clamp01 (/ (- thr 0.6) 0.4)))
-
-; Duty at which this throttle level is considered "at equilibrium"
-; (current-rel crosses zero). speed-coupling 1.0 => balance-duty == thr.
-(defun thermal-balance-duty (thr speed-coupling)
-    (mp-clamp01 (* thr speed-coupling)))
-
-(defun thermal-cell (thr duty peak balance-duty trans-width trans-shape
-                      engine-brake overrun-regen regen-curve)
-    (if (< thr 0.02)
-        ; throttle released: engine braking that grows with duty
-        (- (* engine-brake (pow duty (+ 1.0 regen-curve))))
-    (let ((start (mp-clamp01 (- balance-duty trans-width))))
-    (cond
-        ((<= duty start) peak)
-        ((<= duty balance-duty)
-            (let ((p (/ (- duty start) (mp-max-f 0.001 (- balance-duty start)))))
-            (* peak (- 1.0 (shape-curve p trans-shape)))))
-        (t
-            (let ((over (/ (- duty balance-duty) (mp-max-f 0.001 (- 1.0 balance-duty)))))
-            (- (* overrun-regen (pow (mp-clamp01 over) (+ 1.0 regen-curve))))))
-    ))))
-
-; trans-shape: 0 linear, 1 progressive (ease-in), 2 exponential, 3 late/abrupt
 (defun shape-curve (p shape)
-    (cond
-        ((= shape 0) p)
-        ((= shape 1) (* p p))
-        ((= shape 2) (- 1.0 (pow (- 1.0 p) 3)))
-        (t (pow p 4))
-    ))
+    (cond ((= shape 0) p)
+          ((= shape 1) (* p p))
+          ((= shape 2) (- 1.0 (pow (- 1.0 p) 3)))
+          (t (pow p 4))))
 
+(defun thermal-cell (thr duty peak balance coupling width shape brake overrun curve)
+    (cond
+        ((< thr 0.02) (- (* brake (pow duty (+ 1.0 curve)))))
+        ; Zero speed coupling selects duty-independent electric torque.
+        ((= coupling 0.0) peak)
+        (t
+            (let ((start (clamp01 (- balance width))))
+                (cond
+                    ((<= duty start) peak)
+                    ((<= duty balance)
+                        (* peak (- 1.0 (shape-curve
+                            (/ (- duty start) (max-f 0.001 (- balance start))) shape))))
+                    (t (- (* overrun (pow
+                        (clamp01 (/ (- duty balance) (max-f 0.001 (- 1.0 balance))))
+                        (+ 1.0 curve))))))))))
+
+(defun gen-thermal-map (response coupling width shape hold brake overrun curve)
+    (looprange ti 0 21
+        (let ((thr (/ ti 20.0))
+              (peak (thermal-peak thr response hold))
+              (balance (clamp01 (* thr coupling))))
+            (looprange di 0 21
+                (map-set-cell ti di
+                    (to-fp (thermal-cell thr (/ di 20.0) peak balance coupling
+                                        width shape brake overrun curve)))))))
 @const-end

@@ -1,61 +1,30 @@
 # CarMap Thermal Throttle
 
-Replaces plain throttle-to-current control with a configurable **Throttle x
-Duty -> Current Relative** map, tuned to feel like a thermal-engine
-powertrain: strong low-end pull that holds, a natural taper as the vehicle
-approaches the throttle's "equilibrium" speed, mild overrun regen past that
-point, and progressive engine braking on lift-off.
+A configurable 21 x 21 throttle/duty map drives relative propulsion current
+and relative brake current. Native VESC current, voltage, temperature and
+speed limits remain active.
 
-The final motor command is always a **relative current** (`set-current-rel`,
--1.0..+1.0), never a duty-cycle command, so all of the VESC's native
-protections (current limits, ERPM limits, duty limits, temperature,
-voltage) remain fully in charge.
+## Setup
 
-## What it does
+1. Keep the ADC/PPM input app enabled and set its **Control Type** to **Off**,
+   so it decodes the input without also commanding the motor.
+2. Open **CarMap**, select and calibrate the input, then apply throttle settings.
+3. Select a preset or adjust the generator and press **Apply parameters**.
+4. Use **Save to VESC** while stopped. This uploads the displayed map and
+   parameters, writes EEPROM and verifies the result. Wait for “saved and
+   verified”; output is paused during saving.
+5. Use **Load from VESC** to check the stored data. Restart the controller
+   and check again before relying on the new settings.
 
-- Reads throttle from ADC, PPM or UART (selectable), normalizes it to
-  0..1 with configurable min/max/deadband/invert/filter.
-- Reads the current duty cycle and ERPM.
-- Looks up a 21x21 Throttle x Duty grid with bilinear interpolation to get
-  a Current Relative value every control loop iteration (~200 Hz).
-- Sends that value with `set-current-rel`.
+Version 0.1.52 fixes persistence, mutable-map flash placement, custom generator
+application, Direct Electric behavior and imported-map overwrites. Valid
+20260912 EEPROM saves migrate automatically on the next save; corrupt or
+older formats require reconfiguration. An interrupted save is detected and
+may require saving again.
 
-> **Updating from a version before 0.1.41?** This update changed how
-> throttle min/max/deadband/filter are stored internally (switched from
-> floats to fixed-point integers to cut memory use - see
-> `docs/protocol.md`), which required a storage format change. Your
-> saved calibration, brake mode and map will reset to defaults
-> (Thermal Street) the first time this version boots - redo steps 3-5
-> below once after updating.
+Test mode has a STOP button and a 500 ms communication watchdog. UART and
+PPM also stop commanding current when input updates expire. Test with the
+wheel unloaded after installation; automated tests use simulated hardware,
+not a connected VESC.
 
-## Setup (one-time, in VESC Tool)
-
-1. In **App Settings**, keep the app for your input (ADC / PPM / UART)
-   **enabled**, and set only its **Control Type** dropdown to **Off**.
-   Disabling the app entirely also stops it decoding the signal, so
-   this package would see no input; leaving Control Type on anything
-   else means the app and this package both try to drive the motor at
-   once, which shows up as jerky/stuttering acceleration. If input still
-   feels a bit delayed once that's set correctly, also turn off
-   **Use Filter** in the same App Settings -> ADC/PPM page - it's a
-   separate option (on by default) that adds its own ~5-10 ms of
-   smoothing to the raw signal before this package ever reads it.
-2. Open the **CarMap** tab.
-3. Pick a throttle source and calibrate min/max/deadband if needed.
-4. Pick a preset (Thermal Street / Thermal Race / Wet / Direct Electric)
-   or dial in the Configurator parameters yourself, then
-   **Apply parameters -> generate map**.
-5. **Save to VESC** so the map and settings survive a reboot, and come
-   to a complete stop first. Saving pauses the control loop's own motor
-   commands for up to ~5 seconds so the VESC's eeprom write can
-   actually complete - it needs the motor controller fully released,
-   which the control loop otherwise prevents just by running (see
-   `docs/map_format.md` if curious). The throttle will not respond
-   during that pause, so treat it like any other firmware update: stay
-   stopped until it's done.
-
-See the Map / Curves / 3D tabs to inspect and hand-edit the map, and the
-live dot to see where you are on it while riding.
-
-Full documentation: `docs/architecture.md`, `docs/protocol.md`,
-`docs/map_format.md` in the source repository.
+Source documentation includes the audit report and repeatable 32-bit LispBM tests.

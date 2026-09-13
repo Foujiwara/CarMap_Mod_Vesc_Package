@@ -29,7 +29,7 @@ Item {
     anchors.fill: parent
     // Bumped on every edit - shown in the header as "build N" so a
     // stale/cached install is obvious at a glance instead of ambiguous.
-    property int buildMarker: 51
+    property int buildMarker: 53
     // Desktop and phone hosts need genuinely different sizing rules, not
     // one compromise value - a cap small enough to avoid overflowing a
     // phone screen leaves desktop far too small, and anything generous
@@ -99,15 +99,39 @@ Item {
     property real thrFilter: 1.0
     property int thrBrakeMode: 0 // independent ADC2 brake channel
 
+
+    function validateImport(obj) {
+        if (!obj || !Array.isArray(obj.map) || obj.map.length !== mapN * mapN) throw Error("Expected 441 map cells")
+        function range(v, lo, hi, integer) {
+            if (typeof v !== "number" || !isFinite(v) || v < lo || v > hi || (integer && v !== Math.floor(v))) throw Error("Invalid value in import")
+        }
+        for (var i = 0; i < obj.map.length; i++) range(obj.map[i], -1, 1, false)
+        if (obj.cfg) {
+            var c = obj.cfg
+            range(c.preset,0,4,true); range(c.torqueResp,0.3,2,false); range(c.speedCoupling,0,1.5,false)
+            range(c.transWidth,0.02,0.3,false); range(c.transShape,0,3,true); range(c.highHold,0,1,false)
+            range(c.engineBrake,0,0.6,false); range(c.overrunRegen,0,0.5,false); range(c.regenCurve,0,3,true)
+            range(c.thrSource,0,3,true); range(c.thrInvert,0,1,true); range(c.thrMin,0,1,false); range(c.thrMax,0,1,false)
+            if (c.thrMin >= c.thrMax) throw Error("Min must be below Max")
+            range(c.thrDeadband,0,0.999,false); range(c.thrFilter,0.001,1,false)
+            if (c.thrBrakeMode !== undefined) range(c.thrBrakeMode,0,2,true)
+        }
+    }
+
     function initMapData() {
         var a = []
         for (var i = 0; i < mapN * mapN; i++) a.push(0.0)
         return a
     }
+    function quantizeCell(v) {
+        var x = Math.max(-1, Math.min(1, v)) * 100
+        return (x < 0 ? Math.ceil(x) : Math.floor(x)) / 100
+    }
     function cellIdx(t, d) { return t * mapN + d }
     function getCell(t, d) { return mapData[cellIdx(t, d)] }
     function setCellLocal(t, d, v) {
-        v = Math.max(-1, Math.min(1, v))
+        v = quantizeCell(v)
+        cfgPreset = 0
         var arr = mapData.slice()
         arr[cellIdx(t, d)] = v
         mapData = arr
@@ -118,7 +142,7 @@ Item {
     function fxEnc(v) { return Math.round(v * 1000) }
     function fxDec(v) { return v / 1000.0 }
 
-    function sendPacket(bytesArray) {
+    function transmitPacket(bytesArray) {
         if (!VescIf.isPortConnected()) { statusText = "Not connected"; return }
         var buf = new ArrayBuffer(bytesArray.length)
         var view = new DataView(buf)
@@ -142,7 +166,7 @@ Item {
     }
     function sendAllRows() { for (var t = 0; t < mapN; t++) sendSetMapRow(t) }
 
-    function sendSetConfig() {
+    function sendSetConfig(regenerate) {
         var b = [cmdSetConfig, cfgPreset & 0xff]
         b = b.concat(i16Bytes(fxEnc(cfgTorqueResp)))
         b = b.concat(i16Bytes(fxEnc(cfgSpeedCoupling)))
@@ -152,9 +176,11 @@ Item {
         b = b.concat(i16Bytes(fxEnc(cfgEngineBrake)))
         b = b.concat(i16Bytes(fxEnc(cfgOverrunRegen)))
         b.push(cfgRegenCurve & 0xff)
+        b.push(regenerate === false ? 0 : 1)
         sendPacket(b)
     }
     function sendSetThrottle() {
+        benchValue = 0
         var b = [cmdSetThr, thrSource & 0xff, thrInvert & 0xff]
         b = b.concat(i16Bytes(fxEnc(thrMin)))
         b = b.concat(i16Bytes(fxEnc(thrMax)))
@@ -163,13 +189,66 @@ Item {
         b.push(thrBrakeMode & 0xff)
         sendPacket(b)
     }
-    function sendSave()  { sendPacket([cmdSave]) }
+    function sendSave() {
+        if (pendingPacket !== null || txQueue.length > 0) { lastCmdStatus = "Wait for the current transfer before saving"; return }
+        if (!mapReceived || !cfgReceived) { lastCmdStatus = "Read map and settings before saving"; return }
+        if (regenDebounce.running) { regenDebounce.stop(); regenerateLocalMap() }
+        lastCmdStatus = "Uploading and saving…"
+        sendSetConfig(false); sendSetThrottle(); sendAllRows(); sendPacket([cmdSave])
+    }
     function sendLoad()  { sendPacket([cmdLoad]) }
     function sendReset() { sendPacket([cmdReset]) }
     function requestMap() { sendPacket([cmdReqMap]) }
     function requestCfg() { sendPacket([cmdReqCfg]) }
     function sendTestThrottle(v) {
-        sendPacket([cmdSetTestThr].concat(i16Bytes(fxEnc(v))))
+        benchValue = v
+        transmitPacket([cmdSetTestThr].concat(i16Bytes(fxEnc(v))))
+    }
+
+
+    property var txQueue: []
+    property var pendingPacket: null
+    property bool mapReceived: false
+    property bool cfgReceived: false
+    property int receivedRows: 0
+    property double lastLiveTime: 0
+    property real benchValue: 0
+    onThrSourceChanged: benchValue = 0
+
+    // One acknowledged command at a time prevents overflowing the VESC mailbox.
+    function sendPacket(bytes) {
+        if (!VescIf.isPortConnected()) { lastCmdStatus = "Not connected"; return }
+        if (txQueue.length >= 64) { failTransfer("Too many pending commands"); return }
+        txQueue.push(bytes)
+        pumpTx()
+    }
+    function pumpTx() {
+        if (pendingPacket !== null || txQueue.length === 0) return
+        pendingPacket = txQueue.shift()
+        if (pendingPacket[0] === cmdReqMap) { receivedRows = 0; mapReceived = false }
+        commandTimeout.restart()
+        transmitPacket(pendingPacket)
+    }
+    function failTransfer(message) {
+        commandTimeout.stop(); pendingPacket = null; txQueue = []
+        mapReceived = false; cfgReceived = false
+        lastCmdStatus = message
+    }
+    Timer { id: commandTimeout; interval: 20000; onTriggered: failTransfer("Command timed out; read back before retrying") }
+    Timer {
+        interval: 500; running: true; repeat: true
+        onTriggered: {
+            if (!VescIf.isPortConnected() || Date.now() - lastLiveTime > 2000) {
+                statusText = "Not connected"; benchValue = 0
+                if (pendingPacket !== null && !VescIf.isPortConnected()) failTransfer("Disconnected during transfer")
+                mapReceived = false; cfgReceived = false
+            }
+        }
+    }
+    Timer {
+        interval: 100; repeat: true
+        running: thrSource === 3 && benchValue > 0 && VescIf.isPortConnected()
+        onTriggered: transmitPacket([cmdSetTestThr].concat(i16Bytes(fxEnc(benchValue))))
     }
 
     // ---------------------------------------------------------------
@@ -184,6 +263,9 @@ Item {
         if (view.byteLength < 1) return
         var cmd = view.getUint8(0)
         if (cmd === rxLive) {
+            if (view.byteLength !== 15) return
+            lastLiveTime = Date.now()
+            if ((!mapReceived || !cfgReceived) && pendingPacket === null && txQueue.length === 0) { requestMap(); requestCfg() }
             liveThrottle = fxDec(view.getInt16(1, false))
             liveDuty = fxDec(view.getInt16(3, false))
             liveErpm = view.getInt32(5, false)
@@ -192,7 +274,10 @@ Item {
             liveBrake = fxDec(view.getInt16(13, false))
             statusText = "Connected"
         } else if (cmd === rxMapRow) {
+            if (view.byteLength !== 44) return
             var row = view.getUint8(1)
+            if (row >= mapN) return
+            receivedRows |= (1 << row)
             var arr = mapData.slice()
             for (var d = 0; d < mapN; d++)
                 arr[cellIdx(row, d)] = fxDec(view.getInt16(2 + d * 2, false))
@@ -204,9 +289,25 @@ Item {
             // command confirmation stored there would flash for at most
             // ~50ms - effectively invisible. lastCmdStatus only changes
             // on an actual STATUS reply.
-            var code = view.getUint8(1)
-            lastCmdStatus = ["OK", "Map saved", "Map loaded", "Reset to defaults"][code] || "OK"
+            if (view.byteLength < 3) return
+            var code = view.getUint8(1), ack = view.getUint8(2)
+            if (ack === cmdSetTestThr) return
+            if (pendingPacket === null || ack !== pendingPacket[0]) return
+            commandTimeout.stop()
+            if (code >= 4) {
+                failTransfer(({4:"Save failed: EEPROM readback differs", 5:"No valid saved data", 6:"Invalid command or settings", 7:"Controller command failed"})[code] || "Controller error")
+                return
+            }
+            if (ack === cmdReqMap) {
+                mapReceived = receivedRows === (1 << mapN) - 1
+                if (!mapReceived) { failTransfer("Incomplete map received"); return }
+            }
+            if (code > 0) lastCmdStatus = ["OK", "Map and settings saved and verified", "Map loaded", "Reset to defaults"][code]
+            pendingPacket = null
+            pumpTx()
         } else if (cmd === rxCfgEcho) {
+            if (view.byteLength !== 27) return
+            cfgReceived = true
             cfgPreset = view.getUint8(1)
             cfgTorqueResp = fxDec(view.getInt16(2, false))
             cfgSpeedCoupling = fxDec(view.getInt16(4, false))
@@ -308,6 +409,8 @@ Item {
                 var val
                 if (thr < 0.02) {
                     val = -cfgEngineBrake * Math.pow(duty, 1 + cfgRegenCurve)
+                } else if (cfgSpeedCoupling === 0) {
+                    val = peak
                 } else {
                     var start = Math.max(0, balanceDuty - cfgTransWidth)
                     if (duty <= start) val = peak
@@ -319,7 +422,7 @@ Item {
                         val = -cfgOverrunRegen * Math.pow(Math.max(0,Math.min(1,over)), 1 + cfgRegenCurve)
                     }
                 }
-                arr[cellIdx(ti, di)] = Math.max(-1, Math.min(1, val))
+                arr[cellIdx(ti, di)] = quantizeCell(val)
             }
         }
         mapData = arr
@@ -593,6 +696,7 @@ Item {
                             var c = heatmap.cellFromPos(mouse.x, mouse.y)
                             selection = { active: true, t0: c.t, d0: c.d, t1: c.t, d1: c.d }
                             hoverT = c.t; hoverD = c.d
+                            editSpin.value = Math.round(getCell(c.t, c.d) * 100)
                         }
                         onPositionChanged: (mouse) => {
                             if (!selection.active) return
@@ -602,6 +706,7 @@ Item {
                         onClicked: (mouse) => {
                             var c = heatmap.cellFromPos(mouse.x, mouse.y)
                             hoverT = c.t; hoverD = c.d
+                            editSpin.value = Math.round(getCell(c.t, c.d) * 100)
                         }
                     }
 
@@ -663,12 +768,12 @@ Item {
                             onActivated: (idx) => {
                                 applyPresetValues(presets[idx].id)
                                 regenerateLocalMap()
-                                sendSetConfig()
+                                sendSetConfig(); requestMap()
                             }
                         }
                         Button {
                             text: "Regenerate map"
-                            onClicked: { regenerateLocalMap(); sendSetConfig() }
+                            onClicked: { regenDebounce.stop(); regenerateLocalMap(); sendSetConfig(); requestMap() }
                         }
                     }
                     // Stacked (label+value row, slider below), not a
@@ -754,7 +859,7 @@ Item {
                     }
                     Button {
                         text: "Send to VESC (generate authoritative map)"
-                        onClicked: { regenerateLocalMap(); sendSetConfig() }
+                        onClicked: { regenDebounce.stop(); regenerateLocalMap(); sendSetConfig(); requestMap() }
                     }
 
                     Rectangle { Layout.fillWidth: true; height: 1; color: "#333" }
@@ -773,6 +878,7 @@ Item {
                                 id: benchThrottleMap
                                 Layout.fillWidth: true
                                 from: 0; to: 1
+                                value: mainItem.benchValue
                                 onMoved: sendTestThrottle(value)
                                 onPressedChanged: if (!pressed) sendTestThrottle(value)
                             }
@@ -803,7 +909,27 @@ Item {
                         SpinBox {
                             id: editSpin
                             from: -100; to: 100; stepSize: 1
-                            value: hoverT >= 0 ? Math.round(getCell(hoverT, hoverD)*100) : 0
+                            editable: true
+                            // Qt's own SpinBox docs recommend an explicit
+                            // IntValidator for a negative `from` - the
+                            // default one is unreliable about accepting a
+                            // leading "-" while typing a negative value.
+                            validator: IntValidator { bottom: -100; top: 100 }
+                            // Not `value: hoverT >= 0 ? ... : 0` - a live
+                            // binding fights every interaction with this
+                            // control: clicking +/- (or typing + Enter)
+                            // writes `value` imperatively, which breaks
+                            // the declarative binding at an unpredictable
+                            // point, then the next mapData change (from
+                            // this very edit, via setCellLocal below)
+                            // could re-trigger it and snap the shown
+                            // value back to whatever it was - looking
+                            // like editing above some cells "refuses" to
+                            // go further. Set the value explicitly once,
+                            // only when the selected cell changes (see
+                            // the MouseArea handlers above), and leave it
+                            // alone otherwise so typing/incrementing is
+                            // never overwritten mid-edit.
                             onValueModified: if (hoverT >= 0) {
                                 setCellLocal(hoverT, hoverD, value/100.0)
                                 sendSetCell(hoverT, hoverD, value/100.0)
@@ -859,6 +985,7 @@ Item {
             // redraws instead of one). Batch the mutation into a single
             // array copy and assign mapData exactly once instead.
             function bumpRow(t, delta) {
+                cfgPreset = 0
                 var arr = mapData.slice()
                 for (var d = 0; d < mapN; d++) {
                     var v = Math.max(-1, Math.min(1, getCell(t,d) + delta))
@@ -868,6 +995,7 @@ Item {
                 sendSetMapRow(t)
             }
             function smoothRow(t) {
+                cfgPreset = 0
                 var row = mapRowSlice(t)
                 var out = row.slice()
                 for (var d = 1; d < mapN-1; d++) out[d] = (row[d-1] + row[d]*2 + row[d+1]) / 4
@@ -877,6 +1005,7 @@ Item {
                 sendSetMapRow(t)
             }
             function pasteRow(t) {
+                cfgPreset = 0
                 if (!clipboardRow) return
                 var arr = mapData.slice()
                 for (var d = 0; d < mapN; d++) arr[cellIdx(t, d)] = Math.max(-1, Math.min(1, clipboardRow[d]))
@@ -884,6 +1013,7 @@ Item {
                 sendSetMapRow(t)
             }
             function pasteCol(d) {
+                cfgPreset = 0
                 if (!clipboardCol) return
                 var arr = mapData.slice()
                 for (var t = 0; t < mapN; t++) arr[cellIdx(t, d)] = Math.max(-1, Math.min(1, clipboardCol[t]))
@@ -891,6 +1021,7 @@ Item {
                 for (var t2 = 0; t2 < mapN; t2++) sendSetMapRow(t2)
             }
             function interpolateSelection() {
+                cfgPreset = 0
                 if (!selection.active) return
                 var tmin = Math.min(selection.t0, selection.t1), tmax = Math.max(selection.t0, selection.t1)
                 var dmin = Math.min(selection.d0, selection.d1), dmax = Math.max(selection.d0, selection.d1)
@@ -1308,6 +1439,7 @@ Item {
                                 id: benchThrottle
                                 Layout.fillWidth: true
                                 from: 0; to: 1
+                                value: mainItem.benchValue
                                 onMoved: sendTestThrottle(value)
                                 onPressedChanged: if (!pressed) sendTestThrottle(value)
                             }
@@ -1319,7 +1451,7 @@ Item {
                             }
                         }
                         Label {
-                            text: "STOP zeroes the bench throttle immediately, same idea as VESC Tool's own Stop button - use it before disconnecting or switching source."
+                            text: "STOP clears the bench throttle immediately. Link loss clears the command after 500 ms."
                             color: "#996"; wrapMode: Text.WordWrap; Layout.fillWidth: true; font.pixelSize: 16
                         }
                     }
@@ -1357,7 +1489,7 @@ Item {
                                 Label { text: "Filter (1.0 = off)"; color: "#ccc"; Layout.fillWidth: true; elide: Text.ElideRight }
                                 Label { text: thrFilter.toFixed(2); color: "#fff" }
                             }
-                            Slider { Layout.fillWidth: true; from: 0; to: 1.0; value: thrFilter; onMoved: thrFilter = value }
+                            Slider { Layout.fillWidth: true; from: 0.001; to: 1.0; value: thrFilter; onMoved: thrFilter = value }
                         }
                     }
                     Button { text: "Apply throttle settings"; onClicked: sendSetThrottle() }
@@ -1402,13 +1534,14 @@ Item {
                             transWidth: cfgTransWidth, transShape: cfgTransShape, highHold: cfgHighHold,
                             engineBrake: cfgEngineBrake, overrunRegen: cfgOverrunRegen, regenCurve: cfgRegenCurve,
                             thrSource: thrSource, thrInvert: thrInvert, thrMin: thrMin, thrMax: thrMax,
-                            thrDeadband: thrDeadband, thrFilter: thrFilter } }) }
+                            thrDeadband: thrDeadband, thrFilter: thrFilter, thrBrakeMode: thrBrakeMode } }) }
                         Button {
                             text: "Import from text"
                             onClicked: {
                                 try {
                                     var obj = JSON.parse(exportArea.text)
-                                    if (obj.map && obj.map.length === mapN*mapN) mapData = obj.map
+                                    validateImport(obj)
+                                    mapData = obj.map.map(quantizeCell)
                                     if (obj.cfg) {
                                         cfgPreset = obj.cfg.preset; cfgTorqueResp = obj.cfg.torqueResp
                                         cfgSpeedCoupling = obj.cfg.speedCoupling; cfgTransWidth = obj.cfg.transWidth
@@ -1417,8 +1550,9 @@ Item {
                                         cfgRegenCurve = obj.cfg.regenCurve; thrSource = obj.cfg.thrSource
                                         thrInvert = obj.cfg.thrInvert; thrMin = obj.cfg.thrMin; thrMax = obj.cfg.thrMax
                                         thrDeadband = obj.cfg.thrDeadband; thrFilter = obj.cfg.thrFilter
+                                        thrBrakeMode = obj.cfg.thrBrakeMode === undefined ? 0 : obj.cfg.thrBrakeMode
                                     }
-                                    sendAllRows(); sendSetConfig(); sendSetThrottle()
+                                    regenDebounce.stop(); sendSetConfig(false); sendSetThrottle(); sendAllRows(); requestMap()
                                     lastCmdStatus = "Imported from text"
                                 } catch (e) { lastCmdStatus = "Import failed: " + e }
                             }
@@ -1443,4 +1577,3 @@ Item {
         }
     }
 }
-
