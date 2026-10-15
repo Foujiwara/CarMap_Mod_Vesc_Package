@@ -23,6 +23,13 @@
 (define live-duty 0)
 (define live-cur-rel 0)
 (define live-brake 0)
+; Time of the last packet from the interface. send-data goes to the last port
+; that received a packet and keeps going there after the app has gone: 20
+; LIVE packets a second into a BLE UART module that has nobody to forward
+; them to hang the module until the controller reboots. LIVE is therefore
+; only sent while the interface is there (keep-alive every 500 ms).
+(define ui-seen nil)
+(define ui-rx-time 0)
 ; One buffer per owner: telemetry never shares its buffer with the event task.
 (define row-packet (array-create 44))
 (define cfg-packet (array-create 27))
@@ -47,6 +54,9 @@
 (defun control-loop ()
     (loopwhile t (progn (control-tick) (sleep 0.005))))
 
+(defun ui-listening ()
+    (and ui-seen (< (secs-since ui-rx-time) 3.0)))
+
 (defun telemetry-loop ()
     (let ((b (array-create 15)))
         (progn (bufset-u8 b 0 pkt-live)
@@ -59,7 +69,7 @@
                 (bufset-i16 b 9 live-cur-rel)
                 (bufset-i16 b 11 (clamp-f (to-i (* (get-current) 100.0)) -32768 32767))
                 (bufset-i16 b 13 live-brake)
-                (proto-send b)
+                (if (ui-listening) (proto-send b))
                 (sleep 0.05))))))
 
 (defun send-map-row (row-i)
@@ -195,10 +205,18 @@
                     cmd)))))
         (proto-send-status 6 (if (> (buflen data) 0) (bufget-u8 data 0) 0))))
 
+(defun handle-rx (data)
+    (progn
+        (setq ui-rx-time (systime))
+        (setq ui-seen t)
+        ; Keep-alive: presence only, no status reply.
+        (if (not (and (= (buflen data) 1) (= (bufget-u8 data 0) pkt-keepalive)))
+            (handle-packet data))))
+
 (defun event-handler ()
     (loopwhile t
         (recv
-            ((event-data-rx . (? data)) (handle-packet data))
+            ((event-data-rx . (? data)) (handle-rx data))
             (_ nil))))
 @const-end
 

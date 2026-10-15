@@ -29,7 +29,7 @@ Item {
     anchors.fill: parent
     // Bumped on every edit - shown in the header as "build N" so a
     // stale/cached install is obvious at a glance instead of ambiguous.
-    property int buildMarker: 57
+    property int buildMarker: 58
     // Desktop and phone hosts need genuinely different sizing rules, not
     // one compromise value - a cap small enough to avoid overflowing a
     // phone screen leaves desktop far too small, and anything generous
@@ -52,6 +52,8 @@ Item {
     readonly property int cmdReqMap:     0x08
     readonly property int cmdReqCfg:     0x09
     readonly property int cmdSetTestThr: 0x0A
+
+    readonly property int cmdKeepAlive: 0x10
 
     readonly property int rxLive:    0x80
     readonly property int rxMapRow:  0x81
@@ -247,6 +249,9 @@ Item {
     Timer {
         interval: 500; running: true; repeat: true
         onTriggered: {
+            // Keep-alive: the controller only streams LIVE while the interface
+            // is open, so the BLE module is not flooded once the app is gone.
+            if (VescIf.isPortConnected()) transmitPacket([cmdKeepAlive])
             if (!VescIf.isPortConnected() || Date.now() - lastLiveTime > 2000) {
                 statusText = "Not connected"; benchValue = 0
                 if (pendingPacket !== null && !VescIf.isPortConnected()) failTransfer("Disconnected during transfer")

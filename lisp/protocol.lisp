@@ -13,6 +13,10 @@
 (define pkt-req-cfg     0x09)
 (define pkt-set-test-thr 0x0A)
 
+; Sent by the interface every 500 ms while it is open; no reply. The LIVE
+; telemetry only runs while these (or any other command) keep arriving.
+(define pkt-keepalive   0x10)
+
 (define pkt-live        0x80)
 (define pkt-map-row     0x81)
 (define pkt-status      0x82)
